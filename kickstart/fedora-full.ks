@@ -278,7 +278,7 @@ if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
             kernel-cachyos-devel 2>/dev/null; then
             log "CachyOS-Kernel installiert."
             if command -v grubby &>/dev/null; then
-                NEW_KERNEL=$(ls /boot/vmlinuz-*cachyos* 2>/dev/null | sort -V | tail -1)
+                NEW_KERNEL=$(ls /boot/vmlinuz-*cachyos* 2>/dev/null | sort -V | tail -1 || true)
                 if [[ -n "$NEW_KERNEL" ]]; then
                     grubby --set-default "$NEW_KERNEL" \
                         && log "CachyOS-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
