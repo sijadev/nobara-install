@@ -231,13 +231,21 @@ deltarpm=True
 DNFEOF
 log "DNF: max_parallel_downloads=10, fastestmirror, deltarpm."
 
-# ── 0b. Flathub einrichten ────────────────────────────────────────────────────
+# ── 0b. Flathub einrichten (system-wide) ─────────────────────────────────────
 step "Flathub"
 if command -v flatpak &>/dev/null; then
-    flatpak remote-add --if-not-exists flathub \
-        https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
-        && log "Flathub hinzugefügt." \
+    flatpak remote-add --if-not-exists --system flathub \
+        https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
+        && log "Flathub system-weit hinzugefügt." \
         || warn "Flathub setup fehlgeschlagen (non-fatal)."
+    # Extension Manager system-weit installieren (verfügbar für alle User)
+    if ! flatpak list --system 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
+        flatpak install --system --noninteractive flathub com.mattjakeman.ExtensionManager 2>/dev/null \
+            && log "Extension Manager (system) installiert." \
+            || warn "Extension Manager install fehlgeschlagen (non-fatal)."
+    else
+        log "Extension Manager bereits installiert."
+    fi
 fi
 
 # ── 0c. fstrim (SSD TRIM wöchentlich) ────────────────────────────────────────
@@ -738,13 +746,11 @@ if findmnt -n -o FSTYPE / 2>/dev/null | grep -qx 'btrfs'; then
         && log "timeshift + inotify-tools installiert." \
         || warn "timeshift install fehlgeschlagen (non-fatal)."
 
-    # grub-btrfs benötigt COPR kylegospo/grub-btrfs (nicht in Standard-Repos)
-    # grub-btrfs-timeshift ist das Timeshift-integrierte Paket (ersetzt grub-btrfs)
-    if ! rpm -q grub-btrfs-timeshift &>/dev/null && ! rpm -q grub-btrfs &>/dev/null; then
-        dnf copr enable -y kylegospo/grub-btrfs 2>/dev/null \
-            && dnf install -y grub-btrfs-timeshift 2>/dev/null \
-            && log "grub-btrfs-timeshift installiert (COPR kylegospo)." \
-            || warn "grub-btrfs COPR install fehlgeschlagen (non-fatal)."
+    # grub-btrfs ist direkt in Fedora-Repos verfügbar (kein COPR nötig)
+    if ! rpm -q grub-btrfs &>/dev/null; then
+        run_dnf_retry dnf install -y grub-btrfs \
+            && log "grub-btrfs installiert." \
+            || warn "grub-btrfs install fehlgeschlagen (non-fatal)."
     fi
 
     # Bei Btrfs-Subvolumes enthält SOURCE den Subvolume-Pfad (z.B. /dev/vda3[@])
@@ -833,15 +839,16 @@ if ! rpm -q irqbalance &>/dev/null; then
         && log "irqbalance installiert." \
         || warn "irqbalance install fehlgeschlagen (non-fatal)."
 fi
-systemctl enable --now irqbalance 2>/dev/null \
-    && log "irqbalance aktiviert." \
+# --now vermeiden: systemctl start schlägt im DNF-Kontext fehl (kein D-Bus)
+systemctl enable irqbalance 2>/dev/null \
+    && log "irqbalance aktiviert (startet beim nächsten Boot)." \
     || warn "irqbalance enable fehlgeschlagen (non-fatal)."
 
 # ── 12. ananicy-cpp (Prozess-Priorisierung) ──────────────────────────────────
 step "ananicy-cpp"
 if ! rpm -q ananicy-cpp &>/dev/null; then
-    # COPR aktivieren und installieren
-    if dnf copr enable -y eriknguyen/ananicy-cpp &>/dev/null; then
+    # tschmitz/ananicy-cpp unterstützt Fedora 43
+    if dnf copr enable -y tschmitz/ananicy-cpp &>/dev/null; then
         dnf install -y ananicy-cpp \
             && log "ananicy-cpp installiert." \
             || warn "ananicy-cpp install fehlgeschlagen (non-fatal)."
@@ -850,8 +857,8 @@ if ! rpm -q ananicy-cpp &>/dev/null; then
     fi
 fi
 if command -v ananicy-cpp &>/dev/null; then
-    systemctl enable --now ananicy-cpp 2>/dev/null \
-        && log "ananicy-cpp aktiviert." \
+    systemctl enable ananicy-cpp 2>/dev/null \
+        && log "ananicy-cpp aktiviert (startet beim nächsten Boot)." \
         || warn "ananicy-cpp enable fehlgeschlagen (non-fatal)."
 fi
 
@@ -987,16 +994,19 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "GNOME steps 1-5 skipped. Oh-My-Bash + AI steps will run via systemd service."
 fi
 
-# ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
-step "Flatpak Extension Manager"
+# ── 1. Flathub + Flatpak Extension Manager ────────────────────────────────────
+step "Flathub + Extension Manager"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
-elif ! flatpak list --user 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
-    log "Installing Extension Manager..."
-    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
-        || warn "Extension Manager install failed (non-fatal)."
 else
-    log "Extension Manager already installed."
+    flatpak remote-add --if-not-exists flathub \
+        https://flathub.org/ 2>/dev/null \
+        && log "Flathub remote eingebunden." \
+        || warn "Flathub remote-add fehlgeschlagen (non-fatal)."
+
+    flatpak install flathub com.mattjakeman.ExtensionManager 2>/dev/null \
+        && log "Extension Manager installiert." \
+        || warn "Extension Manager install fehlgeschlagen (non-fatal)."
 fi
 
 # ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
@@ -1011,34 +1021,23 @@ else
         "caffeine@patapon.info"
         "appindicatorsupport@rgcjonas.gmail.com"
     )
-    # dash-to-panel kollidiert mit dash-to-dock — explizit ausgeschlossen
+    # dash-to-panel kollidiert mit dash-to-dock — explizit deaktivieren
     CONFLICTING=("dash-to-panel@jderose9.github.com")
 
-    # Nur gsettings schreiben — kein DBUS Enable/Disable.
-    # DBUS EnableExtension triggert GNOME Shell zur sofortigen Neubewertung und
-    # überschreibt dconf wieder wenn dash-to-dock nicht im laufenden Scan-Ergebnis
-    # auftaucht (race condition bei frisch installierten System-Extensions).
-    # gsettings-Wert wirkt sicher beim nächsten GNOME-Start.
-    if command -v gsettings &>/dev/null; then
-        current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
-        current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$' || true)
-        new_list=""
-        for ext in "${EXTENSIONS[@]}"; do
-            new_list+="'${ext}', "
-            echo "$current" | grep -qF "$ext" || log "Füge zur enabled-Liste hinzu: $ext"
-        done
-        while IFS= read -r e; do
-            [[ -z "$e" ]] && continue
-            found=0
-            for ext in "${EXTENSIONS[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
-            for ext in "${CONFLICTING[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
-            [[ $found -eq 0 ]] && new_list+="'${e}', "
-        done <<< "$current"
-        new_list="[${new_list%, }]"
-        gsettings set org.gnome.shell enabled-extensions "$new_list" 2>/dev/null \
-            && log "Extensions in gsettings gesetzt: $new_list" \
-            || warn "gsettings enabled-extensions fehlgeschlagen."
-    fi
+    # User-Extensions global erlauben (standardmäßig deaktiviert in GNOME)
+    gsettings set org.gnome.shell disable-user-extensions false 2>/dev/null || true
+
+    # Konflikte deaktivieren
+    for ext in "${CONFLICTING[@]}"; do
+        gnome-extensions disable "$ext" 2>/dev/null || true
+    done
+
+    # Jede Extension einzeln aktivieren
+    for ext in "${EXTENSIONS[@]}"; do
+        gnome-extensions enable "$ext" 2>/dev/null \
+            && log "Extension aktiviert: $ext" \
+            || warn "Extension konnte nicht aktiviert werden (non-fatal): $ext"
+    done
 
     # ── Dash-to-Dock Konfiguration (macOS-Stil) ───────────────────────────────
     dtd() { gsettings set org.gnome.shell.extensions.dash-to-dock "$@" 2>/dev/null || true; }
@@ -1137,7 +1136,7 @@ ws_install_theme \
     "WhiteSur-gtk-theme" \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
     "$GTK_DEST" \
-    "-l -c Dark"
+    "-c Dark"
 
 # Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
 ws_install_theme \
@@ -1352,7 +1351,7 @@ fi
 # ── Final report ──────────────────────────────────────────────────────────────
 step "First-login provisioning complete"
 
-if [[ -v WHITESUR_ERRORS ]] && [[ "${#WHITESUR_ERRORS[@]}" -gt 0 ]]; then
+if [[ "${#WHITESUR_ERRORS[@]}" -gt 0 ]]; then
     warn "WhiteSur errors encountered:"
     for e in "${WHITESUR_ERRORS[@]}"; do
         warn "  - $e"

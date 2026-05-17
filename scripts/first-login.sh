@@ -75,16 +75,19 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "GNOME steps 1-5 skipped. Oh-My-Bash + AI steps will run via systemd service."
 fi
 
-# ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
-step "Flatpak Extension Manager"
+# ── 1. Flathub + Flatpak Extension Manager ────────────────────────────────────
+step "Flathub + Extension Manager"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
-elif ! flatpak list --user 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
-    log "Installing Extension Manager..."
-    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
-        || warn "Extension Manager install failed (non-fatal)."
 else
-    log "Extension Manager already installed."
+    flatpak remote-add --if-not-exists flathub \
+        https://flathub.org/ 2>/dev/null \
+        && log "Flathub remote eingebunden." \
+        || warn "Flathub remote-add fehlgeschlagen (non-fatal)."
+
+    flatpak install flathub com.mattjakeman.ExtensionManager 2>/dev/null \
+        && log "Extension Manager installiert." \
+        || warn "Extension Manager install fehlgeschlagen (non-fatal)."
 fi
 
 # ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
@@ -99,34 +102,23 @@ else
         "caffeine@patapon.info"
         "appindicatorsupport@rgcjonas.gmail.com"
     )
-    # dash-to-panel kollidiert mit dash-to-dock — explizit ausgeschlossen
+    # dash-to-panel kollidiert mit dash-to-dock — explizit deaktivieren
     CONFLICTING=("dash-to-panel@jderose9.github.com")
 
-    # Nur gsettings schreiben — kein DBUS Enable/Disable.
-    # DBUS EnableExtension triggert GNOME Shell zur sofortigen Neubewertung und
-    # überschreibt dconf wieder wenn dash-to-dock nicht im laufenden Scan-Ergebnis
-    # auftaucht (race condition bei frisch installierten System-Extensions).
-    # gsettings-Wert wirkt sicher beim nächsten GNOME-Start.
-    if command -v gsettings &>/dev/null; then
-        current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
-        current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$' || true)
-        new_list=""
-        for ext in "${EXTENSIONS[@]}"; do
-            new_list+="'${ext}', "
-            echo "$current" | grep -qF "$ext" || log "Füge zur enabled-Liste hinzu: $ext"
-        done
-        while IFS= read -r e; do
-            [[ -z "$e" ]] && continue
-            found=0
-            for ext in "${EXTENSIONS[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
-            for ext in "${CONFLICTING[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
-            [[ $found -eq 0 ]] && new_list+="'${e}', "
-        done <<< "$current"
-        new_list="[${new_list%, }]"
-        gsettings set org.gnome.shell enabled-extensions "$new_list" 2>/dev/null \
-            && log "Extensions in gsettings gesetzt: $new_list" \
-            || warn "gsettings enabled-extensions fehlgeschlagen."
-    fi
+    # User-Extensions global erlauben (standardmäßig deaktiviert in GNOME)
+    gsettings set org.gnome.shell disable-user-extensions false 2>/dev/null || true
+
+    # Konflikte deaktivieren
+    for ext in "${CONFLICTING[@]}"; do
+        gnome-extensions disable "$ext" 2>/dev/null || true
+    done
+
+    # Jede Extension einzeln aktivieren
+    for ext in "${EXTENSIONS[@]}"; do
+        gnome-extensions enable "$ext" 2>/dev/null \
+            && log "Extension aktiviert: $ext" \
+            || warn "Extension konnte nicht aktiviert werden (non-fatal): $ext"
+    done
 
     # ── Dash-to-Dock Konfiguration (macOS-Stil) ───────────────────────────────
     dtd() { gsettings set org.gnome.shell.extensions.dash-to-dock "$@" 2>/dev/null || true; }
@@ -225,7 +217,7 @@ ws_install_theme \
     "WhiteSur-gtk-theme" \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
     "$GTK_DEST" \
-    "-l -c Dark"
+    "-c Dark"
 
 # Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
 ws_install_theme \
@@ -440,7 +432,7 @@ fi
 # ── Final report ──────────────────────────────────────────────────────────────
 step "First-login provisioning complete"
 
-if [[ -v WHITESUR_ERRORS ]] && [[ "${#WHITESUR_ERRORS[@]}" -gt 0 ]]; then
+if [[ "${#WHITESUR_ERRORS[@]}" -gt 0 ]]; then
     warn "WhiteSur errors encountered:"
     for e in "${WHITESUR_ERRORS[@]}"; do
         warn "  - $e"

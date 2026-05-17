@@ -5,7 +5,7 @@
 # Marker: /var/lib/fedora-provision/first-boot.done
 #
 # Tasks:
-#   1. System-Update (dnf upgrade)
+#   1. System-Update (dnf update)
 #   2. NVIDIA Open Driver update
 #   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
 #   4. Set system-wide CUDA environment variables
@@ -125,13 +125,21 @@ deltarpm=True
 DNFEOF
 log "DNF: max_parallel_downloads=10, fastestmirror, deltarpm."
 
-# ── 0b. Flathub einrichten ────────────────────────────────────────────────────
+# ── 0b. Flathub einrichten (system-wide) ─────────────────────────────────────
 step "Flathub"
 if command -v flatpak &>/dev/null; then
-    flatpak remote-add --if-not-exists flathub \
-        https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
-        && log "Flathub hinzugefügt." \
+    flatpak remote-add --if-not-exists --system flathub \
+        https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
+        && log "Flathub system-weit hinzugefügt." \
         || warn "Flathub setup fehlgeschlagen (non-fatal)."
+    # Extension Manager system-weit installieren (verfügbar für alle User)
+    if ! flatpak list --system 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
+        flatpak install --system --noninteractive flathub com.mattjakeman.ExtensionManager 2>/dev/null \
+            && log "Extension Manager (system) installiert." \
+            || warn "Extension Manager install fehlgeschlagen (non-fatal)."
+    else
+        log "Extension Manager bereits installiert."
+    fi
 fi
 
 # ── 0c. fstrim (SSD TRIM wöchentlich) ────────────────────────────────────────
@@ -142,11 +150,11 @@ systemctl enable fstrim.timer 2>/dev/null \
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
-log "Running dnf upgrade..."
-if run_dnf_retry dnf upgrade -y --refresh; then
-    log "dnf upgrade completed."
+log "Running dnf update..."
+if run_dnf_retry dnf update -y --refresh; then
+    log "dnf update completed."
 else
-    warn "dnf upgrade failed — continuing provisioning with current package state."
+    warn "dnf update failed — continuing provisioning with current package state."
 fi
 
 # ── 1a. RPM Fusion (NVIDIA packages) ──────────────────────────────────────────
@@ -632,13 +640,11 @@ if findmnt -n -o FSTYPE / 2>/dev/null | grep -qx 'btrfs'; then
         && log "timeshift + inotify-tools installiert." \
         || warn "timeshift install fehlgeschlagen (non-fatal)."
 
-    # grub-btrfs benötigt COPR kylegospo/grub-btrfs (nicht in Standard-Repos)
-    # grub-btrfs-timeshift ist das Timeshift-integrierte Paket (ersetzt grub-btrfs)
-    if ! rpm -q grub-btrfs-timeshift &>/dev/null && ! rpm -q grub-btrfs &>/dev/null; then
-        dnf copr enable -y kylegospo/grub-btrfs 2>/dev/null \
-            && dnf install -y grub-btrfs-timeshift 2>/dev/null \
-            && log "grub-btrfs-timeshift installiert (COPR kylegospo)." \
-            || warn "grub-btrfs COPR install fehlgeschlagen (non-fatal)."
+    # grub-btrfs ist direkt in Fedora-Repos verfügbar (kein COPR nötig)
+    if ! rpm -q grub-btrfs &>/dev/null; then
+        run_dnf_retry dnf install -y grub-btrfs \
+            && log "grub-btrfs installiert." \
+            || warn "grub-btrfs install fehlgeschlagen (non-fatal)."
     fi
 
     # Bei Btrfs-Subvolumes enthält SOURCE den Subvolume-Pfad (z.B. /dev/vda3[@])
@@ -727,15 +733,16 @@ if ! rpm -q irqbalance &>/dev/null; then
         && log "irqbalance installiert." \
         || warn "irqbalance install fehlgeschlagen (non-fatal)."
 fi
-systemctl enable --now irqbalance 2>/dev/null \
-    && log "irqbalance aktiviert." \
+# --now vermeiden: systemctl start schlägt im DNF-Kontext fehl (kein D-Bus)
+systemctl enable irqbalance 2>/dev/null \
+    && log "irqbalance aktiviert (startet beim nächsten Boot)." \
     || warn "irqbalance enable fehlgeschlagen (non-fatal)."
 
 # ── 12. ananicy-cpp (Prozess-Priorisierung) ──────────────────────────────────
 step "ananicy-cpp"
 if ! rpm -q ananicy-cpp &>/dev/null; then
-    # COPR aktivieren und installieren
-    if dnf copr enable -y eriknguyen/ananicy-cpp &>/dev/null; then
+    # tschmitz/ananicy-cpp unterstützt Fedora 43
+    if dnf copr enable -y tschmitz/ananicy-cpp &>/dev/null; then
         dnf install -y ananicy-cpp \
             && log "ananicy-cpp installiert." \
             || warn "ananicy-cpp install fehlgeschlagen (non-fatal)."
@@ -744,8 +751,8 @@ if ! rpm -q ananicy-cpp &>/dev/null; then
     fi
 fi
 if command -v ananicy-cpp &>/dev/null; then
-    systemctl enable --now ananicy-cpp 2>/dev/null \
-        && log "ananicy-cpp aktiviert." \
+    systemctl enable ananicy-cpp 2>/dev/null \
+        && log "ananicy-cpp aktiviert (startet beim nächsten Boot)." \
         || warn "ananicy-cpp enable fehlgeschlagen (non-fatal)."
 fi
 
