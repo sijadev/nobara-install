@@ -208,7 +208,7 @@ build_on_macos() {
     # Ohne das waere --prefix hardcoded auf (hd0,gpt2) und wuerde auf Rechnern
     # mit installierter NVMe/SSD fehlschlagen (USB ist dann hd1, hd2, ...).
     local early_cfg="${WORK_DIR}/grub-early.cfg"
-    cat > "$early_cfg" <<\'EARLYCFG\'
+    cat > "$early_cfg" <<'EARLYCFG'
 search --no-floppy --label --set=root FEDORA-USB
 set prefix=($root)/boot/grub2
 EARLYCFG
