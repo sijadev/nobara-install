@@ -111,7 +111,7 @@ cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
 # Marker: /var/lib/fedora-provision/first-boot.done
 #
 # Tasks:
-#   1. System-Update (dnf upgrade)
+#   1. System-Update (dnf update)
 #   2. NVIDIA Open Driver update
 #   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
 #   4. Set system-wide CUDA environment variables
@@ -256,11 +256,11 @@ systemctl enable fstrim.timer 2>/dev/null \
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
-log "Running dnf upgrade..."
-if run_dnf_retry dnf upgrade -y --refresh; then
-    log "dnf upgrade completed."
+log "Running dnf update..."
+if run_dnf_retry dnf update -y --refresh; then
+    log "dnf update completed."
 else
-    warn "dnf upgrade failed — continuing provisioning with current package state."
+    warn "dnf update failed — continuing provisioning with current package state."
 fi
 
 # ── 1a. RPM Fusion (NVIDIA packages) ──────────────────────────────────────────
