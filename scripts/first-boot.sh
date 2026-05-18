@@ -23,6 +23,21 @@ err()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2; }
 die()  { err "$*"; exit 1; }
 step() { echo; echo "══ $* ══"; }
 
+systemd_available() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    [[ -d /run/systemd/system ]] || return 1
+    systemctl show-environment >/dev/null 2>&1 || return 1
+}
+
+systemctl_safe() {
+    if systemd_available; then
+        systemctl "$@"
+    else
+        warn "systemctl $* uebersprungen (kein systemd als PID 1)."
+        return 0
+    fi
+}
+
 run_dnf_retry() {
     local max_attempts="${DNF_RETRY_MAX:-3}"
     local sleep_seconds="${DNF_RETRY_SLEEP:-4}"
@@ -324,7 +339,7 @@ ExecStop=/usr/bin/nvidia-smi  -pm 0
 [Install]
 WantedBy=multi-user.target
 NVEOF
-        systemctl daemon-reload
+        systemctl_safe daemon-reload
         systemctl enable nvidia-performance.service 2>/dev/null \
             && log "nvidia-performance.service aktiviert." \
             || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
@@ -416,7 +431,7 @@ ExecStart=/bin/bash -c 'for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_go
 WantedBy=multi-user.target
 SUTILEOF
 
-    systemctl daemon-reload
+    systemctl_safe daemon-reload
     systemctl enable tuned.service           2>/dev/null || true
     systemctl enable cpu-performance.service 2>/dev/null || true
     systemctl enable cpu-schedutil.service   2>/dev/null || true
@@ -460,7 +475,7 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 SCXEOF
-    systemctl daemon-reload
+    systemctl_safe daemon-reload
     systemctl enable scx-bpfland.service 2>/dev/null \
         && log "scx-bpfland.service aktiviert." \
         || warn "scx-bpfland enable fehlgeschlagen (non-fatal)."

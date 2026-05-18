@@ -11,7 +11,7 @@ else
 	VENV_PIP := $(VENV_DIR)/bin/pip
 endif
 
-.PHONY: help check-os-prereqs venv install install-dev test install-usb install-podman e2e test-full-e2e clean
+.PHONY: help check-os-prereqs venv install install-dev test run-all run-all-verbose run-all-full run-all-e2e run-all-full-e2e install-usb install-podman e2e test-full-e2e clean
 
 help:
 	@echo "Targets:"
@@ -20,6 +20,11 @@ help:
 	@echo "  make install     - Runtime-Abhangigkeiten installieren"
 	@echo "  make install-dev - Dev/Test-Abhangigkeiten installieren"
 	@echo "  make test        - Standard-Testlauf ohne Full/E2E"
+	@echo "  make run-all     - tests/run-all.sh"
+	@echo "  make run-all-verbose - tests/run-all.sh -v"
+	@echo "  make run-all-full - tests/run-all.sh --full"
+	@echo "  make run-all-e2e - tests/run-all.sh --e2e"
+	@echo "  make run-all-full-e2e - tests/run-all.sh --full --e2e"
 	@echo "  make install-usb DEVICE=/dev/sdX - Echte USB-Installation starten"
 	@echo "  make install-podman - Installation in Podman mit virtuellem USB"
 	@echo "  make e2e         - Alias fur install-podman"
@@ -94,8 +99,22 @@ install: venv
 install-dev: venv
 	@"$(VENV_PIP)" install -r requirements-dev.txt
 
-test:
+run-all:
 	@bash tests/run-all.sh
+
+run-all-verbose:
+	@bash tests/run-all.sh -v
+
+run-all-full:
+	@bash tests/run-all.sh --full
+
+run-all-e2e:
+	@bash tests/run-all.sh --e2e
+
+run-all-full-e2e:
+	@bash tests/run-all.sh --full --e2e
+
+test: run-all
 
 install-usb:
 	@if [ -z "$(DEVICE)" ]; then \
@@ -107,13 +126,16 @@ install-usb:
 	@sudo ./install.sh "$(DEVICE)"
 
 install-podman:
-	@bash tests/test_podman_e2e_usb.sh --run
+	@python3 tests/test_podman_e2e_usb.py --run
 
 e2e: install-podman
 
-test-full-e2e:
-	@bash tests/run-all.sh --full --e2e
+test-full-e2e: run-all-full-e2e
 
 clean:
 	@echo "Entferne venv: $(VENV_DIR)"
 	@rm -rf "$(VENV_DIR)"
+
+.PHONY: test-podman-rpm-pipeline
+test-podman-rpm-pipeline:
+	@bash tools/podman_rpm_pipeline.sh

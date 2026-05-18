@@ -83,3 +83,10 @@ ls /mnt/fedora-usb/rpm/*.rpm >/dev/null
 test -d /mnt/fedora-usb/rpm/repodata
 
 echo "[podman-e2e] PASS"
+
+# RPM-Pipeline-Test auf gemountetem USB ausfuehren
+if [ -f /src/tools/podman_rpm_pipeline.sh ]; then
+    bash /src/tools/podman_rpm_pipeline.sh
+else
+    echo "[WARN] podman_rpm_pipeline.sh nicht gefunden!"
+fi

@@ -49,14 +49,14 @@ echo ""
 echo "== Standard-Testlauf =="
 echo ""
 
-echo "[1/5] Shell: install.sh"
-bash tests/test_install_sh.sh "${vflag[@]+"${vflag[@]}"}"
+echo "[1/5] Python: install.sh"
+python3 tests/test_install_sh.py "${vflag[@]+"${vflag[@]}"}"
 
-echo "[2/5] Shell: sync-usb.sh"
-bash tests/test_sync_usb.sh "${vflag[@]+"${vflag[@]}"}"
+echo "[2/5] Python: sync-usb.sh"
+python3 tests/test_sync_usb.py "${vflag[@]+"${vflag[@]}"}"
 
-echo "[3/5] Shell: systemd units"
-bash tests/test_systemd_units.sh "${vflag[@]+"${vflag[@]}"}"
+echo "[3/5] Python: systemd units"
+python3 tests/test_systemd_units.py "${vflag[@]+"${vflag[@]}"}"
 
 if [[ $FULL -eq 1 ]]; then
 	echo "[4/5] Python: apply_config + xml2ks"
@@ -71,7 +71,7 @@ fi
 
 if [[ $E2E -eq 1 ]]; then
 	echo "[6/6] Podman E2E: virtueller USB"
-	bash tests/test_podman_e2e_usb.sh --run
+	python3 tests/test_podman_e2e_usb.py --run
 else
 	echo "[6/6] Podman E2E: ubersprungen (nutze --e2e)"
 fi

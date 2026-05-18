@@ -155,7 +155,7 @@ tools/sync-usb.sh
 8. Optional: Podman-E2E mit virtuellem USB-Stick:
 
 ```bash
-bash tests/test_podman_e2e_usb.sh --run
+python3 tests/test_podman_e2e_usb.py --run
 # oder im Gesamtlauf:
 bash tests/run-all.sh --e2e
 ```
