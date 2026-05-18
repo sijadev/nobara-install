@@ -241,7 +241,7 @@ EARLYCFG
     cp "${PROJECT_DIR}/kickstart/common-post.inc" "${DATA_MNT}/kickstart/"
     cp "${PROJECT_DIR}"/kickstart/*.ks "${DATA_MNT}/kickstart/" 2>/dev/null || true
     cp -r "${PROJECT_DIR}/scripts/." "${DATA_MNT}/scripts/"
-    install -m 0750 "${PROJECT_DIR}/fedora-provision.sh" "${DATA_MNT}/fedora-provision.sh"
+    install -m 0750 "${PROJECT_DIR}/scripts/fedora-provision.sh" "${DATA_MNT}/fedora-provision.sh"
     if [[ -d "${PROJECT_DIR}/systemd" ]]; then
         cp -r "${PROJECT_DIR}/systemd/." "${DATA_MNT}/systemd/"
     fi
@@ -440,7 +440,7 @@ cp "${PROJECT_DIR}"/kickstart/*.ks "${DATA_MNT}/kickstart/" 2>/dev/null || true
 
 cp -r "${PROJECT_DIR}/scripts/." "${DATA_MNT}/scripts/"
 
-install -m 0750 "${PROJECT_DIR}/fedora-provision.sh" "${DATA_MNT}/fedora-provision.sh"
+install -m 0750 "${PROJECT_DIR}/scripts/fedora-provision.sh" "${DATA_MNT}/fedora-provision.sh"
 
 if [[ -d "${PROJECT_DIR}/systemd" ]]; then
     cp -r "${PROJECT_DIR}/systemd/." "${DATA_MNT}/systemd/"

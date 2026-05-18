@@ -45,7 +45,7 @@ install -m 0755 scripts/welcome-dialog.sh %{buildroot}/usr/local/share/%{name}/s
 install -m 0644 scripts/fedora-provision.desktop %{buildroot}/usr/local/share/%{name}/scripts/
 
 # Provision script
-install -m 0755 fedora-provision.sh     %{buildroot}/usr/local/share/%{name}/
+install -m 0755 scripts/fedora-provision.sh     %{buildroot}/usr/local/share/%{name}/
 
 # Systemd unit
 install -m 0644 systemd/fedora-first-boot.service %{buildroot}/usr/local/share/%{name}/systemd/

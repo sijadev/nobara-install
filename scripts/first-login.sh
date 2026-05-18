@@ -379,13 +379,6 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
     if [[ ! -f "$QUADLET_TPL" || ! -f "$ROUTER_UNIT" ]]; then
         warn "Quadlet-Template oder Router-Unit fehlt — first-boot.sh lief ggf. noch nicht."
     else
-        # Image vorab pullen (Custom-Build bevorzugt, sonst Upstream)
-        VLLM_IMAGE="localhost/fedora-vllm:latest"
-        if ! podman image exists "$VLLM_IMAGE" 2>/dev/null; then
-            warn "Custom-Image '${VLLM_IMAGE}' fehlt — bauen mit:"
-            warn "  ./tools/podman-pipeline.sh --build-vllm"
-        fi
-
         # Router-venv + Wrapper
         ROUTER_VENV="${HOME}/.venvs/vllm-router"
         if [[ ! -d "$ROUTER_VENV" ]]; then
@@ -425,10 +418,6 @@ WRAPEOF
         log "Modelle:    curl http://localhost:8000/v1/models"
     fi
 fi
-
-# Entfernt: alte venv-basierte vLLM-Source-Builds (PyTorch, CUDA 13.2 toolchain,
-# vLLM-Omni source build, Model-Download). vLLM läuft im Podman-Container
-# (Containerfile.vllm), aktiviert via vllm-router.service + vllm@.container Template.
 
 # ── Final report ──────────────────────────────────────────────────────────────
 step "First-login provisioning complete"

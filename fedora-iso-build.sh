@@ -180,7 +180,7 @@ cp kickstart/common-post.inc "$STAGE_DIR/kickstart/"
 # Alle .ks für späteren Provisioner-Zugriff einbetten
 cp kickstart/*.ks "$STAGE_DIR/kickstart/" 2>/dev/null || true
 # fedora-provision.sh in ISO-Root für %post --nochroot
-cp fedora-provision.sh "$STAGE_DIR/fedora-provision.sh"
+cp scripts/fedora-provision.sh "$STAGE_DIR/fedora-provision.sh"
 chmod 0750 "$STAGE_DIR/fedora-provision.sh"
 [[ -d systemd ]] && cp -r systemd/. "$STAGE_DIR/systemd/" || true
 

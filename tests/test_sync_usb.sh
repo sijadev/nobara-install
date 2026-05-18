@@ -76,7 +76,7 @@ setup() {
 
     # Pflicht-Quelldateien anlegen (alle aus PLAN)
     touch \
-        "${FAKE_PROJECT}/fedora-provision.sh" \
+        "${FAKE_PROJECT}/scripts/fedora-provision.sh" \
         "${FAKE_PROJECT}/kickstart/common-post.inc" \
         "${FAKE_PROJECT}/kickstart/fedora-full.ks" \
         "${FAKE_PROJECT}/kickstart/fedora-headless-vllm.ks" \
@@ -155,22 +155,23 @@ teardown
 setup
 # Alle PLAN-Dateien auf USB spiegeln
 for entry in \
-    "fedora-provision.sh" \
-    "kickstart/common-post.inc" \
-    "kickstart/fedora-full.ks" \
-    "kickstart/fedora-headless-vllm.ks" \
-    "kickstart/fedora-theme-bash.ks" \
-    "scripts/first-boot.sh" \
-    "scripts/first-login.sh" \
-    "scripts/vllm-router.py" \
-    "scripts/welcome-dialog.sh" \
-    "scripts/fedora-provision.desktop" \
-    "systemd/fedora-first-boot.service" \
-    "systemd/vllm@.container" \
-    "systemd/vllm-router.service" \
-    "boot/grub.cfg"; do
-    mkdir -p "${FAKE_USB}/$(dirname "$entry")"
-    cp "${FAKE_PROJECT}/${entry}" "${FAKE_USB}/${entry}"
+    "scripts/fedora-provision.sh|fedora-provision.sh" \
+    "kickstart/common-post.inc|kickstart/common-post.inc" \
+    "kickstart/fedora-full.ks|kickstart/fedora-full.ks" \
+    "kickstart/fedora-headless-vllm.ks|kickstart/fedora-headless-vllm.ks" \
+    "kickstart/fedora-theme-bash.ks|kickstart/fedora-theme-bash.ks" \
+    "scripts/first-boot.sh|scripts/first-boot.sh" \
+    "scripts/first-login.sh|scripts/first-login.sh" \
+    "scripts/vllm-router.py|scripts/vllm-router.py" \
+    "scripts/welcome-dialog.sh|scripts/welcome-dialog.sh" \
+    "scripts/fedora-provision.desktop|scripts/fedora-provision.desktop" \
+    "systemd/fedora-first-boot.service|systemd/fedora-first-boot.service" \
+    "systemd/vllm@.container|systemd/vllm@.container" \
+    "systemd/vllm-router.service|systemd/vllm-router.service" \
+    "boot/grub.cfg|boot/grub.cfg"; do
+    IFS='|' read -r src dst <<< "$entry"
+    mkdir -p "${FAKE_USB}/$(dirname "$dst")"
+    cp "${FAKE_PROJECT}/${src}" "${FAKE_USB}/${dst}"
 done
 run_test_output "--check: aktuell meldet 'aktuell'" \
     "aktuell" \
@@ -222,22 +223,23 @@ teardown
 setup
 # Alle USB-Dateien synchron mit Projekt
 for entry in \
-    "fedora-provision.sh" \
-    "kickstart/common-post.inc" \
-    "kickstart/fedora-full.ks" \
-    "kickstart/fedora-headless-vllm.ks" \
-    "kickstart/fedora-theme-bash.ks" \
-    "scripts/first-boot.sh" \
-    "scripts/first-login.sh" \
-    "scripts/vllm-router.py" \
-    "scripts/welcome-dialog.sh" \
-    "scripts/fedora-provision.desktop" \
-    "systemd/fedora-first-boot.service" \
-    "systemd/vllm@.container" \
-    "systemd/vllm-router.service" \
-    "boot/grub.cfg"; do
-    mkdir -p "${FAKE_USB}/$(dirname "$entry")"
-    cp "${FAKE_PROJECT}/${entry}" "${FAKE_USB}/${entry}"
+    "scripts/fedora-provision.sh|fedora-provision.sh" \
+    "kickstart/common-post.inc|kickstart/common-post.inc" \
+    "kickstart/fedora-full.ks|kickstart/fedora-full.ks" \
+    "kickstart/fedora-headless-vllm.ks|kickstart/fedora-headless-vllm.ks" \
+    "kickstart/fedora-theme-bash.ks|kickstart/fedora-theme-bash.ks" \
+    "scripts/first-boot.sh|scripts/first-boot.sh" \
+    "scripts/first-login.sh|scripts/first-login.sh" \
+    "scripts/vllm-router.py|scripts/vllm-router.py" \
+    "scripts/welcome-dialog.sh|scripts/welcome-dialog.sh" \
+    "scripts/fedora-provision.desktop|scripts/fedora-provision.desktop" \
+    "systemd/fedora-first-boot.service|systemd/fedora-first-boot.service" \
+    "systemd/vllm@.container|systemd/vllm@.container" \
+    "systemd/vllm-router.service|systemd/vllm-router.service" \
+    "boot/grub.cfg|boot/grub.cfg"; do
+    IFS='|' read -r src dst <<< "$entry"
+    mkdir -p "${FAKE_USB}/$(dirname "$dst")"
+    cp "${FAKE_PROJECT}/${src}" "${FAKE_USB}/${dst}"
 done
 run_test "--check: alles synchron → Exit 0" \
     bash "$SYNC" --check

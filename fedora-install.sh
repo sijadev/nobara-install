@@ -216,7 +216,7 @@ log_step "Provisioner + Scripts deployment to Ventoy"
 
 if [[ "$DRY_RUN" != "1" ]]; then
     # fedora-provision.sh — für bestehende Systeme (theme-bash, headless-vllm)
-    cp "$SCRIPT_DIR/fedora-provision.sh" "$VENTOY_MNT/fedora-provision.sh"
+    cp "$SCRIPT_DIR/scripts/fedora-provision.sh" "$VENTOY_MNT/fedora-provision.sh"
     chmod +x "$VENTOY_MNT/fedora-provision.sh"
     log_info "Provisioner deployed: fedora-provision.sh"
 
@@ -238,7 +238,7 @@ if [[ "$DRY_RUN" != "1" ]]; then
         log_info "Systemd unit deployed: systemd/$(basename "$f")"
     done
 else
-    log_dry "cp fedora-provision.sh → Ventoy root"
+    log_dry "cp scripts/fedora-provision.sh → Ventoy root"
     log_dry "cp scripts/first-boot.sh scripts/first-login.sh → Ventoy/scripts/"
     log_dry "cp systemd/*.service → Ventoy/systemd/"
 fi

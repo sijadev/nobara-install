@@ -83,9 +83,8 @@ fi
 # ── Plan: SRC → DST ───────────────────────────────────────────────────────────
 # Format: "src_rel|dst_rel"
 PLAN=(
-    "fedora-provision.sh|fedora-provision.sh"
+    "scripts/fedora-provision.sh|fedora-provision.sh"
     "kickstart/common-post.inc|kickstart/common-post.inc"
-    "kickstart/fedora-vm.ks|kickstart/fedora-vm.ks"
     "kickstart/fedora-full.ks|kickstart/fedora-full.ks"
     "kickstart/fedora-headless-vllm.ks|kickstart/fedora-headless-vllm.ks"
     "kickstart/fedora-theme-bash.ks|kickstart/fedora-theme-bash.ks"

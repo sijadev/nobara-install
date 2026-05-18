@@ -27,7 +27,7 @@ Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohn
 
 ```
 fedora-autoinstall/
-├── fedora-provision.sh        # Provisioner für laufende Systeme
+
 ├── fedora-iso-build.sh        # Custom-ISO bauen (für dd-Flash ohne USB-Boot)
 │
 ├── boot/
@@ -61,7 +61,6 @@ fedora-autoinstall/
 │   ├── build-usb.sh           # USB-Stick einmalig aufbauen (GRUB2 + Bazzite-Kernel)
 │   ├── sync-usb.sh            # Repo → USB synchronisieren
 │   ├── apply_config.py        # XML-Config auf Kickstart-Dateien anwenden
-│   ├── podman-pipeline.sh     # Layered Container-Build
 │   └── podman-run.sh          # Interaktiver Container-Start
 │
 ├── systemd/
