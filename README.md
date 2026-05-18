@@ -6,17 +6,31 @@ Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohn
 
 ---
 
-## Voraussetzungen
+## Systemvoraussetzungen
+
+### Host-System für USB-Erstellung
 
 | Was | Version / Bedingung |
 |---|---|
-| Host-System | Fedora Linux **oder** macOS (Intel/Apple Silicon) |
-| Python 3 | `python3`, `pip`, `venv` |
-| Linux: `sgdisk`, `mkfs.fat`, `grub2-install` | `dnf install gdisk dosfstools grub2-efi-x64 grub2-tools` |
-| macOS: `grub-install`, `diskutil`, `hdiutil` | `brew install grub` (`diskutil`/`hdiutil` sind systemweit vorhanden) |
-| `xorriso`, `cpio`, `zstd`, `rpm2cpio` | `dnf install xorriso cpio zstd rpm-build` |
-| USB-Stick | ≥ 8 GB, wird komplett neu formatiert |
-| Root-Rechte | `sudo tools/build-usb.sh …` |
+| Host-System | Fedora Linux oder macOS (Intel/Apple Silicon) |
+| USB-Stick | >= 8 GB, wird komplett neu formatiert |
+| UEFI-Zielsystem | erforderlich (Legacy-BIOS wird nicht unterstützt) |
+| Root-Rechte | sudo für Build/Install-Skripte |
+
+### OS-Abhängigkeiten (USB-Build)
+
+| Betriebssystem | Benötigte Tools |
+|---|---|
+| Fedora Linux | `sudo dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file curl python3` |
+| macOS | `brew install grub python cpio file-formula curl` (plus systemweit `diskutil`, `hdiutil`) |
+
+### Python-Umgebung (Projekt/Tests)
+
+| Betriebssystem | Benötigt |
+|---|---|
+| Windows 11 | Python 3 mit `venv` (für lokale Python-Tools/Tests, kein USB-Build) |
+| macOS | Python 3 mit `venv` |
+| Linux | Python 3 mit `venv` |
 
 > **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer), AMD Ryzen CPU empfohlen.  
 > Legacy-BIOS wird nicht unterstützt.
@@ -39,8 +53,8 @@ fedora-autoinstall/
 │
 ├── kickstart/
 │   ├── fedora-full.ks         # Vollinstallation (GNOME + NVIDIA)
-│   ├── fedora-theme-bash.ks   # GNOME + WhiteSur, kein AI
-│   ├── fedora-headless-vllm.ks# Kein GUI, Podman + NVIDIA
+│   ├── fedora-theme-bash.ks   # GNOME + WhiteSur
+│   ├── fedora-headless-vllm.ks# Headless-Profil (kein GUI)
 │   └── common-post.inc        # Gemeinsamer %post-Block
 │
 ├── lib/
@@ -54,7 +68,6 @@ fedora-autoinstall/
 │   ├── first-boot.sh          # Systemweite Provisionierung (root, einmalig)
 │   ├── first-login.sh         # User-Provisionierung (einmalig)
 │   ├── welcome-dialog.sh      # GNOME Welcome-Dialog
-│   ├── vllm-router.py         # vLLM Multi-Model Router
 │   └── fedora-provision.desktop # GNOME App-Menü Eintrag
 │
 ├── tools/                     # Entwickler- und Build-Werkzeuge (Dev-Rechner)
@@ -74,6 +87,67 @@ fedora-autoinstall/
 ---
 
 ## Schnellstart
+
+### Empfohlener Workflow (genau)
+
+1. Repository vorbereiten:
+
+```bash
+git clone https://github.com/sijadev/fedora-autoinstall.git
+cd fedora-autoinstall
+```
+
+2. Python-Umgebung anlegen und Abhängigkeiten installieren:
+
+```bash
+# Nur Laufzeitpakete
+make install
+
+# Optional für Entwicklung/Tests
+make install-dev
+```
+
+3. Konfiguration prüfen/anpassen:
+
+```bash
+# XML-Standardkonfiguration
+cat config/example.xml
+
+# Optional: JSON-Konfiguration für apply_config.py
+cat config/install.json
+```
+
+4. Optional Tests ausführen (vor USB-Schreiben empfohlen):
+
+```bash
+bash tests/run-all.sh --full
+```
+
+5. RPM bauen und lokales Repo aktualisieren:
+
+```bash
+# Lokaler Build (Fedora):
+# rpmbuild -bb --define "_sourcedir ." rpm/fedora-autoinstall.spec
+
+# Alternativ auf macOS per Podman/Fedora-Container bauen
+# Ergebnis: rpm/fedora-autoinstall-*.noarch.rpm
+
+createrepo rpm/
+```
+
+6. USB-Stick vollständig erstellen (empfohlen):
+
+```bash
+sudo ./install.sh /dev/sdX
+# macOS: sudo ./install.sh /dev/diskN
+```
+
+7. Danach inkrementelle Updates auf bestehendem Stick:
+
+```bash
+tools/sync-usb.sh --check
+tools/sync-usb.sh
+```
 
 ### 1. USB-Stick einmalig aufbauen
 
@@ -129,7 +203,7 @@ Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO au
 # Theme + WhiteSur + Oh-My-Bash
 sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile theme-bash
 
-# Headless: NVIDIA + Podman, kein GUI
+# Headless-Profil, kein GUI
 sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile headless-vllm
 ```
 
@@ -183,13 +257,10 @@ Für tiefere Diagnose: **[d] Debug-Install** — Serial-Log landet auf dem USB-S
 ## Profile im Detail
 
 ### `full` — Vollinstallation (USB-Boot)
-Frische Neuinstallation auf leerem System. Btrfs, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash, Podman.
+Frische Neuinstallation auf leerem System. Btrfs, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash.
 
 ### `theme-bash` — Theme + Bash (Provisioner)
 WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Bash.
-
-### `headless-vllm` — Headless (Provisioner)
-NVIDIA Open Driver, CUDA, Podman. Kein GUI.
 
 ---
 
@@ -221,7 +292,7 @@ Beim ersten Boot werden automatisch eingerichtet:
 |---------|-----|
 | **DNF** | `max_parallel_downloads=10`, `fastestmirror`, `deltarpm` |
 | **Kernel/Sysctl** | `vm.swappiness=10`, `vfs_cache_pressure=50`, `net.core.somaxconn=1024` |
-| **Hugepages** | `madvise` via tmpfiles.d — PyTorch/vLLM nutzen es gezielt |
+| **Hugepages** | `madvise` via tmpfiles.d |
 | **CPU** | `tuned throughput-performance` + `schedutil` Governor |
 | **scx_bpfland** | Cache-aware Scheduler für AMD Ryzen CCDs (COPR bieszczaders) |
 | **NVIDIA** | Persistence Mode als systemd-Service |
