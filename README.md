@@ -123,7 +123,7 @@ cat config/install.json
 bash tests/run-all.sh --full
 ```
 
-5. RPM bauen und lokales Repo aktualisieren:
+5. Optional: RPM manuell bauen (Debug/Entwicklung):
 
 ```bash
 # Lokaler Build (Fedora):
@@ -132,8 +132,11 @@ bash tests/run-all.sh --full
 # Alternativ auf macOS per Podman/Fedora-Container bauen
 # Ergebnis: rpm/fedora-autoinstall-*.noarch.rpm
 
+# Repo-Metadaten aktualisieren
 createrepo rpm/
 ```
+
+Hinweis: `install.sh` erledigt RPM-Build + Repo-Metadaten inzwischen automatisch.
 
 6. USB-Stick vollständig erstellen (empfohlen):
 
@@ -147,6 +150,14 @@ sudo ./install.sh /dev/sdX
 ```bash
 tools/sync-usb.sh --check
 tools/sync-usb.sh
+```
+
+8. Optional: Podman-E2E mit virtuellem USB-Stick:
+
+```bash
+bash tests/test_podman_e2e_usb.sh --run
+# oder im Gesamtlauf:
+bash tests/run-all.sh --e2e
 ```
 
 ### 1. USB-Stick einmalig aufbauen
@@ -389,5 +400,5 @@ inst.disk=nvme1n1
 - **UEFI erforderlich:** Legacy-BIOS/MBR nicht unterstützt.
 - **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` ersetzen.
 - **Kernel-Cache:** `iso/kernel-cache/` — Bazzite-RPMs werden gecacht, kein Re-Download bei `build-usb.sh`.
-- **RPM-Repo:** `rpm/fedora-autoinstall-*.noarch.rpm` + `createrepo rpm/` nach jedem Build nötig.
+- **RPM-Repo:** Wird von `install.sh` automatisch gebaut und beim USB-Build nach `rpm/` auf den Stick kopiert.
 

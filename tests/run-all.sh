@@ -13,6 +13,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 VERBOSE=0
 FULL=0
+E2E=0
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -24,8 +25,12 @@ while [[ $# -gt 0 ]]; do
 			FULL=1
 			shift
 			;;
+		--e2e)
+			E2E=1
+			shift
+			;;
 		-h|--help)
-			echo "Usage: bash tests/run-all.sh [-v|--verbose] [--full]"
+			echo "Usage: bash tests/run-all.sh [-v|--verbose] [--full] [--e2e]"
 			exit 0
 			;;
 		*)
@@ -62,6 +67,13 @@ if [[ $FULL -eq 1 ]]; then
 else
 	echo "[4/5] Python: ubersprungen (nutze --full)"
 	echo "[5/5] Validator: ubersprungen (nutze --full)"
+fi
+
+if [[ $E2E -eq 1 ]]; then
+	echo "[6/6] Podman E2E: virtueller USB"
+	bash tests/test_podman_e2e_usb.sh --run
+else
+	echo "[6/6] Podman E2E: ubersprungen (nutze --e2e)"
 fi
 
 echo ""

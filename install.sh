@@ -162,6 +162,14 @@ elif [[ "$CONFIG_MODE" == "json" ]]; then
     }
 fi
 
+# ── RPM bauen + Repo-Metadaten aktualisieren ────────────────────────────────
+step "RPM bauen + Repo aktualisieren"
+if "${SCRIPT_DIR}/tools/build-rpm.sh"; then
+    log "RPM-Build erfolgreich und Repo-Metadaten aktualisiert."
+else
+    die "RPM-Build fehlgeschlagen — Installation abgebrochen."
+fi
+
 # ── USB-Stick bauen ───────────────────────────────────────────────────────────
 step "USB-Stick bauen"
 exec "${SCRIPT_DIR}/tools/build-usb.sh" "$USB_DEV"

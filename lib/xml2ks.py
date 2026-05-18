@@ -362,6 +362,10 @@ def main() -> int:
     parser.add_argument("--validate-only", metavar="XML", help="Validate XML and exit")
     parser.add_argument("--config",        metavar="XML", help="Input XML config file")
     parser.add_argument("--output",        metavar="KS",  help="Output Kickstart file")
+    # Legacy flags are accepted for compatibility with older installer wrappers.
+    parser.add_argument("--first-boot-script",  metavar="PATH", help=argparse.SUPPRESS)
+    parser.add_argument("--first-login-script", metavar="PATH", help=argparse.SUPPRESS)
+    parser.add_argument("--systemd-unit",       metavar="PATH", help=argparse.SUPPRESS)
     parser.add_argument("--get-field",     metavar="FIELD",
                         help="Print a single field value and exit")
     parser.add_argument("xml_positional",  nargs="?",

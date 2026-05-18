@@ -118,6 +118,10 @@ run_test "fedora-full.ks verwendet workstation-product-environment" \
 run_test "fedora-full.ks verwendet nicht veraltetes fedora-desktop" \
     bash -c "! grep -q '@\^fedora-desktop' '${PROJECT_DIR}/kickstart/fedora-full.ks'"
 
+# ── 11. RPM-Build ist Teil des Installationsablaufs ─────────────────────────
+run_test "install.sh ruft tools/build-rpm.sh auf" \
+    bash -c "grep -q 'tools/build-rpm\.sh' '${INSTALL_SH}'"
+
 # ── Ergebnis ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Ran $((PASS + FAIL)) tests: ${PASS} ok, ${FAIL} failed"

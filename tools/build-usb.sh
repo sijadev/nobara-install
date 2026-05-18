@@ -245,6 +245,13 @@ EARLYCFG
     if [[ -d "${PROJECT_DIR}/systemd" ]]; then
         cp -r "${PROJECT_DIR}/systemd/." "${DATA_MNT}/systemd/"
     fi
+    if compgen -G "${PROJECT_DIR}/rpm/*.rpm" >/dev/null; then
+        mkdir -p "${DATA_MNT}/rpm"
+        cp -r "${PROJECT_DIR}/rpm/." "${DATA_MNT}/rpm/"
+        log "RPM-Repo kopiert -> rpm/"
+    else
+        warn "Keine RPM-Datei unter rpm/ gefunden — lokales Repo wird ubersprungen."
+    fi
     log "Dateien kopiert."
 
     step "Sync"
@@ -444,6 +451,14 @@ install -m 0750 "${PROJECT_DIR}/scripts/fedora-provision.sh" "${DATA_MNT}/fedora
 
 if [[ -d "${PROJECT_DIR}/systemd" ]]; then
     cp -r "${PROJECT_DIR}/systemd/." "${DATA_MNT}/systemd/"
+fi
+
+if compgen -G "${PROJECT_DIR}/rpm/*.rpm" >/dev/null; then
+    mkdir -p "${DATA_MNT}/rpm"
+    cp -r "${PROJECT_DIR}/rpm/." "${DATA_MNT}/rpm/"
+    log "RPM-Repo kopiert -> rpm/"
+else
+    warn "Keine RPM-Datei unter rpm/ gefunden — lokales Repo wird ubersprungen."
 fi
 
 log "Dateien kopiert."
