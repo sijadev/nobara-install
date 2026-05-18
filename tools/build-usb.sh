@@ -89,6 +89,23 @@ ensure_unmounted_part() {
     fi
 }
 
+ensure_block_node() {
+    local dev_path="$1"
+    local dev_base sys_dev major minor
+
+    [[ -b "$dev_path" ]] && return 0
+
+    dev_base="$(basename "$dev_path")"
+    sys_dev="/sys/class/block/${dev_base}/dev"
+
+    [[ -r "$sys_dev" ]] || return 1
+    IFS=':' read -r major minor < "$sys_dev"
+    [[ -n "$major" && -n "$minor" ]] || return 1
+
+    mknod "$dev_path" b "$major" "$minor" 2>/dev/null || true
+    [[ -b "$dev_path" ]]
+}
+
 build_on_macos() {
     local usb_whole root_whole size_bytes USB_SIZE_GB
     local src_iso KVER ISO_DEV=""
@@ -381,17 +398,36 @@ sgdisk \
     --new=1:0:+1G   --typecode=1:EF00 --change-name=1:"EFI" \
     --new=2:0:0        --typecode=2:0700 --change-name=2:"FEDORA-USB" \
     "$USB_DEV" >/dev/null
-partprobe "$USB_DEV"
+if command -v partprobe &>/dev/null; then
+    partprobe "$USB_DEV"
+elif command -v partx &>/dev/null; then
+    partx -u "$USB_DEV" >/dev/null 2>&1 || true
+else
+    warn "Weder partprobe noch partx gefunden — setze auf Kernel-Auto-Refresh."
+fi
 sleep 1
 
-# Partition-Pfade (sda1/sda2 oder nvme0n1p1/nvme0n1p2)
-if [[ "$USB_DEV" =~ nvme|mmcblk ]]; then
+# Partition-Pfade (sda1/sda2, nvme0n1p1/nvme0n1p2, loop0p1/loop0p2)
+if [[ "$USB_DEV" =~ nvme|mmcblk|loop ]]; then
     EFI_PART="${USB_DEV}p1"
     DATA_PART="${USB_DEV}p2"
 else
     EFI_PART="${USB_DEV}1"
     DATA_PART="${USB_DEV}2"
 fi
+
+# In Containern ohne udev fehlen Partition-Device-Nodes teils trotz gueltiger
+# Kernel-Partitionstabelle. Dann aus /sys/class/block/<dev>/dev erzeugen.
+if [[ ! -b "$EFI_PART" ]]; then
+    ensure_block_node "$EFI_PART" || true
+fi
+if [[ ! -b "$DATA_PART" ]]; then
+    ensure_block_node "$DATA_PART" || true
+fi
+
+[[ -b "$EFI_PART" && -b "$DATA_PART" ]] \
+    || die "Partition-Devices nicht gefunden: $EFI_PART / $DATA_PART"
+
 log "EFI-Partition:  $EFI_PART"
 log "Daten-Partition: $DATA_PART"
 

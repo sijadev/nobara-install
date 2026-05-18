@@ -50,7 +50,7 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$vIQuz3HLrh0EkSj6$KmIvhP/zN/NQfwRAiSOyl0H8mGmwrOYtwJXk0cBM98eONcgTU867DeR8NWIeRYJwGYQVCBxlkb2Sxt4dDfMKY. --iscrypted --gecos="sija"
+user --groups=wheel,video,audio --name=sija --password=$6$vIQuz3HLrh0EkSj6$KmIvhP/zN/NQfwRAiSOyl0H8mGmwrOYtwJXk0cBM98eONcgTU867DeR8NWIeRYJwGYQVCBxlkb2Sxt4dDfMKY. --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -69,9 +69,6 @@ gcc-c++
 cmake
 openssh-server
 ninja-build
-virt-manager
-qemu-kvm
-libvirt
 fedora-autoinstall
 %end
 
