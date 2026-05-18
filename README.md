@@ -206,7 +206,7 @@ USB einstecken → UEFI Boot → GRUB2-Menü → Hotkey drücken:
 | `t` | Theme + Bash | Provisioner auf bestehendem System |
 | `h` | Headless | Provisioner: Podman + NVIDIA, kein GUI |
 
-Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO auf dem USB-Stick nötig.
+Stage2 (Anaconda-Installer) wird aus der lokalen ISO auf dem USB-Stick geladen — die ISO wird beim USB-Build mitkopiert.
 
 ### 4. Provisioner auf laufendem System
 

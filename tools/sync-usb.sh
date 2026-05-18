@@ -36,6 +36,14 @@ log()  { echo -e "${GREEN}[sync-usb]${RESET} $*"; }
 warn() { echo -e "${YELLOW}[sync-usb]${RESET} $*" >&2; }
 die()  { echo -e "${RED}[sync-usb] $*${RESET}" >&2; exit 1; }
 
+remove_usb_metadata_files() {
+    local target_dir="$1"
+    [[ -d "$target_dir" ]] || return 0
+
+    find "$target_dir" -type f \( -name '._*' -o -name '.DS_Store' \) -delete 2>/dev/null || true
+    find "$target_dir" -type d -name '__MACOSX' -prune -exec rm -rf {} + 2>/dev/null || true
+}
+
 # ── FEDORA-USB-Stick mounten ──────────────────────────────────────────────────
 self_mounted=0
 USB_DEV=""
@@ -83,6 +91,7 @@ fi
 # ── Plan: SRC → DST ───────────────────────────────────────────────────────────
 # Format: "src_rel|dst_rel"
 PLAN=(
+    "__iso__|iso/fedora-netinst.iso"
     "scripts/fedora-provision.sh|fedora-provision.sh"
     "kickstart/common-post.inc|kickstart/common-post.inc"
     "kickstart/fedora-full.ks|kickstart/fedora-full.ks"
@@ -117,7 +126,11 @@ to_remove=()
 
 for entry in "${PLAN[@]}"; do
     IFS='|' read -r src_rel dst_rel <<<"$entry"
-    src="${PROJECT_DIR}/${src_rel}"
+    if [[ "$src_rel" == "__iso__" ]]; then
+        src=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
+    else
+        src="${PROJECT_DIR}/${src_rel}"
+    fi
     dst="${USB_MNT}/${dst_rel}"
     [[ -f "$src" ]] || { warn "Quelle fehlt: ${src_rel} — übersprungen"; continue; }
 
@@ -169,9 +182,17 @@ fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
 if [[ ${#to_copy[@]} -gt 0 ]]; then
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        # Avoid creating AppleDouble sidecar files (._*) on FAT volumes.
+        export COPYFILE_DISABLE=1
+    fi
     for entry in "${to_copy[@]}"; do
         IFS='|' read -r src_rel dst_rel <<<"$entry"
-        src="${PROJECT_DIR}/${src_rel}"
+        if [[ "$src_rel" == "__iso__" ]]; then
+            src=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
+        else
+            src="${PROJECT_DIR}/${src_rel}"
+        fi
         dst="${USB_MNT}/${dst_rel}"
         mkdir -p "$(dirname "$dst")"
         cp "$src" "$dst"
@@ -185,6 +206,8 @@ if [[ ${#to_remove[@]} -gt 0 ]]; then
         log "Entfernt: ${f}"
     done
 fi
+
+remove_usb_metadata_files "${USB_MNT}"
 
 sync
 log "USB-Stick synchronisiert ✓"

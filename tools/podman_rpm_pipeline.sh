@@ -15,6 +15,8 @@ if [[ "${RPM_PIPELINE_TRACE:-0}" == "1" ]]; then
     set -x
 fi
 
+PODMAN_PLATFORM="linux/amd64"
+
 check_bitwig_audio_setup() {
     local profile="$1"
     local target_user="$2"
@@ -87,13 +89,13 @@ while true; do
 done
 SHEOF
 
-    podman build --pull=missing -t "${smoke_image}" -f "${build_dir}/Containerfile" "${build_dir}" \
+    podman build --platform "${PODMAN_PLATFORM}" --pull=missing -t "${smoke_image}" -f "${build_dir}/Containerfile" "${build_dir}" \
         && echo "[rpm-pipeline] OK: vLLM-Smoke-Image gebaut: ${smoke_image}" \
         || { echo "[FAIL] vLLM-Smoke-Image Build fehlgeschlagen"; rm -rf "${build_dir}"; return 1; }
 
     echo "[rpm-pipeline] Erzeuge vLLM-Smoke-Container ${smoke_container} ..."
     podman rm -f "${smoke_container}" >/dev/null 2>&1 || true
-    podman create --name "${smoke_container}" "${smoke_image}" \
+    podman create --platform "${PODMAN_PLATFORM}" --name "${smoke_container}" "${smoke_image}" \
         && echo "[rpm-pipeline] OK: vLLM-Smoke-Container erstellt: ${smoke_container}" \
         || { echo "[FAIL] vLLM-Smoke-Container konnte nicht erstellt werden"; rm -rf "${build_dir}"; return 1; }
 

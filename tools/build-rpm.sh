@@ -10,6 +10,7 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RPM_DIR="${PROJECT_DIR}/rpm"
 SPEC_FILE="${RPM_DIR}/fedora-autoinstall.spec"
 HOST_OS="$(uname -s)"
+PODMAN_PLATFORM="linux/amd64"
 
 if [[ -t 1 ]]; then
     RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
@@ -99,6 +100,7 @@ build_with_podman() {
     podman info >/dev/null 2>&1 || die "Podman ist nicht bereit."
 
     podman run --rm \
+        --platform "${PODMAN_PLATFORM}" \
         -v "${PROJECT_DIR}:/src:Z" \
         fedora:latest \
         /bin/bash -lc "

@@ -3,7 +3,7 @@ set -euo pipefail
 
 dnf -y install \
     gdisk dosfstools \
-    cpio file xz zstd curl python3 python3-pip \
+    cpio file xz zstd curl python3 python3-pip bsdtar \
     rpm-build createrepo_c pykickstart \
     util-linux e2fsprogs xorriso rsync openssl >/dev/null
 
@@ -78,7 +78,12 @@ dd if=/dev/zero of="$work/iso/images/pxeboot/initrd.img" bs=1K count=256 status=
 xorriso -as mkisofs -R -J -o "$work/Fedora-Everything-netinst-x86_64-43-1.6.iso" "$work/iso" >/dev/null 2>&1
 
 mkdir -p /src/iso
-cp "$work/Fedora-Everything-netinst-x86_64-43-1.6.iso" /src/iso/
+target_iso="/src/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso"
+if [[ -f "$target_iso" ]]; then
+    echo "[podman-e2e] Nutze vorhandene ISO unter /src/iso (kein Überschreiben nötig)"
+else
+    cp "$work/Fedora-Everything-netinst-x86_64-43-1.6.iso" /src/iso/
+fi
 
 # grub2-install scheitert in Containern oft auf overlayfs.
 # Fuer den E2E-Test mocken wir nur diesen Schritt und pruefen den Rest des Flows.
@@ -169,6 +174,36 @@ check_artifact() {
     fi
 }
 
+check_grub_install_source() {
+    local grub_cfg="$1"
+    if [[ ! -f "$grub_cfg" ]]; then
+        echo "[podman-e2e][FAIL] GRUB-Konfiguration fehlt: $grub_cfg"
+        status=1
+        return
+    fi
+
+    if grep -q "inst.stage2=" "$grub_cfg"; then
+        echo "[podman-e2e][OK] GRUB enthaelt inst.stage2"
+    else
+        echo "[podman-e2e][FAIL] GRUB enthaelt kein inst.stage2 (Informationsquelle unklar)"
+        status=1
+    fi
+
+    if grep -q "inst.stage2=hd:LABEL=FEDORA-USB:/iso/fedora-netinst.iso" "$grub_cfg"; then
+        echo "[podman-e2e][OK] GRUB zeigt Stage2 auf die lokale ISO"
+    else
+        echo "[podman-e2e][FAIL] GRUB zeigt Stage2 nicht auf die lokale ISO"
+        status=1
+    fi
+
+    if grep -q "inst.repo=" "$grub_cfg"; then
+        echo "[podman-e2e][OK] GRUB enthaelt inst.repo"
+    else
+        echo "[podman-e2e][FAIL] GRUB enthaelt kein inst.repo (Informationsquelle fehlt)"
+        status=1
+    fi
+}
+
 scan_log_patterns() {
     local src="$1"
     local name="$2"
@@ -200,6 +235,8 @@ scan_log_patterns() {
 if [[ "$mounted" -eq 1 ]]; then
     check_artifact /mnt/fedora-usb/boot/vmlinuz
     check_artifact /mnt/fedora-usb/boot/initrd.img
+    check_artifact /mnt/fedora-usb/boot/grub2/grub.cfg
+    check_artifact /mnt/fedora-usb/iso/fedora-netinst.iso
     check_artifact /mnt/fedora-usb/kickstart/fedora-full.ks
     if ls /mnt/fedora-usb/rpm/*.rpm >/dev/null 2>&1; then
         echo "[podman-e2e][OK] RPM-Artefakte vorhanden"
@@ -208,6 +245,7 @@ if [[ "$mounted" -eq 1 ]]; then
         status=1
     fi
     check_artifact /mnt/fedora-usb/rpm/repodata
+    check_grub_install_source /mnt/fedora-usb/boot/grub2/grub.cfg
 
     # Wichtige Marker/Logs vom gemounteten USB pruefen.
     scan_log_patterns /mnt/fedora-usb/var/log/fedora-first-boot.log fedora-first-boot.log

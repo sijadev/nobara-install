@@ -15,6 +15,9 @@ import time
 from pathlib import Path
 
 
+PODMAN_PLATFORM = "linux/amd64"
+
+
 def run(cmd: list[str]) -> int:
     return subprocess.run(cmd, check=False).returncode
 
@@ -49,13 +52,13 @@ def main() -> int:
         print("[podman-e2e] starte E2E via podman machine (rootful container)...")
         if not args.keep_on_fail:
             cmd = (
-                "sudo podman run --rm --privileged "
+                f"sudo podman run --rm --privileged --platform {PODMAN_PLATFORM} "
                 f"-v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}"
             )
             return run(["podman", "machine", "ssh", cmd])
 
         cmd = (
-            f"sudo podman run --name {debug_name} --privileged -v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}; "
+            f"sudo podman run --name {debug_name} --privileged --platform {PODMAN_PLATFORM} -v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}; "
             "rc=$?; "
             "if [ $rc -eq 0 ]; then "
             f"  sudo podman rm -f {debug_name} >/dev/null; "
@@ -76,6 +79,8 @@ def main() -> int:
                 "run",
                 "--rm",
                 "--privileged",
+                "--platform",
+                PODMAN_PLATFORM,
                 "-v",
                 f"{project_dir}:/src:Z",
                 "fedora:latest",
@@ -91,6 +96,8 @@ def main() -> int:
             "--name",
             debug_name,
             "--privileged",
+            "--platform",
+            PODMAN_PLATFORM,
             "-v",
             f"{project_dir}:/src:Z",
             "fedora:latest",

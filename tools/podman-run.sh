@@ -29,6 +29,7 @@ LAYER="06-agent"
 WITH_GPU=1
 AS_ROOT=0
 EXTRA_CMD=()
+PODMAN_PLATFORM="linux/amd64"
 
 # ── .env laden ────────────────────────────────────────────────────────────────
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
@@ -96,6 +97,7 @@ echo ""
 # ── Ausführen ─────────────────────────────────────────────────────────────────
 exec podman run --rm -it \
     --privileged \
+    --platform "${PODMAN_PLATFORM}" \
     "${gpu_flags[@]+"${gpu_flags[@]}"}" \
     "${mounts[@]+"${mounts[@]}"}" \
     ${HF_TOKEN:+--env "HF_TOKEN=${HF_TOKEN}"} \

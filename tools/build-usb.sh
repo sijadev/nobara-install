@@ -11,7 +11,7 @@
 #   RPMs werden in iso/kernel-cache/ gecacht.
 #   Später: Bazzite-Kernel für Blackwell-Support (RTX 9070/50xx) austauschbar.
 #
-# Stage2: Fedora Mirror (Netzwerk) — kein ISO auf USB nötig.
+# Stage2: lokale Fedora-ISO auf USB (offline-freundlich).
 #
 # Usage:
 #   sudo tools/build-usb.sh /dev/sdX
@@ -48,6 +48,24 @@ detect_kernel_version() {
 
     [[ -n "$kver" ]] || kver="unbekannt"
     printf '%s\n' "$kver"
+}
+
+remove_usb_metadata_files() {
+    local target_dir="$1"
+    [[ -d "$target_dir" ]] || return 0
+
+    # macOS can create AppleDouble sidecar files on FAT volumes.
+    find "$target_dir" -type f \( -name '._*' -o -name '.DS_Store' \) -delete 2>/dev/null || true
+    find "$target_dir" -type d -name '__MACOSX' -prune -exec rm -rf {} + 2>/dev/null || true
+}
+
+copy_iso_to_usb() {
+    local src_iso="$1"
+    local target_dir="$2"
+
+    [[ -f "$src_iso" ]] || return 1
+    mkdir -p "$target_dir/iso"
+    install -m 0644 "$src_iso" "$target_dir/iso/fedora-netinst.iso"
 }
 
 validate_extracted_boot_artifacts() {
@@ -144,6 +162,9 @@ build_on_macos() {
     usb_whole="${USB_DEV%%s[0-9]*}"
     [[ "$usb_whole" =~ ^/dev/disk[0-9]+$ ]] || die "Auf macOS bitte das Whole-Disk-Device angeben (z.B. /dev/disk4)."
 
+    # Prevent AppleDouble metadata files (._*) from being created while copying.
+    export COPYFILE_DISABLE=1
+
     step "Sicherheitscheck: $usb_whole"
     size_bytes=$(diskutil info -plist "$usb_whole" 2>/dev/null | plutil -extract TotalSize raw - 2>/dev/null || true)
     [[ -n "$size_bytes" ]] || die "Kann Datentragergroße nicht ermitteln: $usb_whole"
@@ -196,6 +217,7 @@ build_on_macos() {
 
     cp "${WORK_DIR}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
     cp "${WORK_DIR}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
+    copy_iso_to_usb "$src_iso" "$DATA_MNT"
 
     validate_extracted_boot_artifacts "${WORK_DIR}/vmlinuz" "${WORK_DIR}/initrd.img" \
         || die "Extrahierte Boot-Dateien sind ungültig (ISO defekt/trunkiert?)."
@@ -302,6 +324,7 @@ EARLYCFG
     else
         warn "Keine RPM-Datei unter rpm/ gefunden — lokales Repo wird ubersprungen."
     fi
+    remove_usb_metadata_files "${DATA_MNT}"
     log "Dateien kopiert."
 
     step "Sync"
@@ -407,6 +430,7 @@ mount -o loop,ro "$src_iso" "$ISO_MNT"
 
 cp "${ISO_MNT}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
 cp "${ISO_MNT}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
+    copy_iso_to_usb "$src_iso" "$DATA_MNT"
 
 validate_extracted_boot_artifacts "${WORK_DIR}/vmlinuz" "${WORK_DIR}/initrd.img" \
     || die "Extrahierte Boot-Dateien sind ungültig (ISO defekt/trunkiert?)."
@@ -532,6 +556,8 @@ if compgen -G "${PROJECT_DIR}/rpm/*.rpm" >/dev/null; then
 else
     warn "Keine RPM-Datei unter rpm/ gefunden — lokales Repo wird ubersprungen."
 fi
+
+remove_usb_metadata_files "${DATA_MNT}"
 
 log "Dateien kopiert."
 
