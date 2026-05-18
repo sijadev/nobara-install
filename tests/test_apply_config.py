@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 import apply_config as ac  # type: ignore[import-untyped]  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -69,7 +69,7 @@ keyboard --xlayouts='de'
 lang de_DE.UTF-8
 timezone Europe/Berlin --utc
 network --hostname=fedora-workstation
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$oldhash  --iscrypted --gecos="sija"
+user --groups=wheel,video,audio --name=sija --password=$6$rounds=4096$oldhash  --iscrypted --gecos="sija"
 FEDORA_TARGET_USER="sija"
 FEDORA_CUDA_SOURCE="nvidia"
 FEDORA_PYTORCH_VENV="~/.venvs/old-ai"

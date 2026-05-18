@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/podman-pipeline.sh — Layered Podman test pipeline for Fedora provisioning
+# tools/podman-pipeline.sh — Layered Podman test pipeline for Fedora provisioning
 #
 # Each layer builds on the previous one and is committed as a named image tag.
 # Rerun from any layer without redoing earlier work.
@@ -13,7 +13,7 @@
 #   06-agent    Neo4j driver + Bitwig agent scaffold
 #
 # Usage:
-#   ./scripts/podman-pipeline.sh [OPTIONS] [LAYER...]
+#   ./tools/podman-pipeline.sh [OPTIONS] [LAYER...]
 #
 # Options:
 #   --from LAYER      Start (or re-run) from this layer (rebuilds it + all after)
@@ -28,11 +28,11 @@
 #   -h, --help        Show this help
 #
 # Examples:
-#   ./scripts/podman-pipeline.sh                        # run all layers
-#   ./scripts/podman-pipeline.sh --from 03-themes       # rebuild from themes onward
-#   ./scripts/podman-pipeline.sh --only 04-vllm         # re-run vllm layer only
-#   ./scripts/podman-pipeline.sh --no-gpu --from 01-base
-#   ./scripts/podman-pipeline.sh --build-vllm           # custom Blackwell vLLM Image
+#   ./tools/podman-pipeline.sh                        # run all layers
+#   ./tools/podman-pipeline.sh --from 03-themes       # rebuild from themes onward
+#   ./tools/podman-pipeline.sh --only 04-vllm         # re-run vllm layer only
+#   ./tools/podman-pipeline.sh --no-gpu --from 01-base
+#   ./tools/podman-pipeline.sh --build-vllm           # custom Blackwell vLLM Image
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -1082,7 +1082,7 @@ podman images --format "  {{.Repository}}:{{.Tag}}  ({{.Size}})" \
     | grep "^  ${IMAGE_PREFIX}:" || true
 echo ""
 ok "Run a layer interactively:  podman run -it --rm ${IMAGE_PREFIX}:03-themes bash"
-ok "Rebuild from themes:        ./scripts/podman-pipeline.sh --from 03-themes"
+ok "Rebuild from themes:        ./tools/podman-pipeline.sh --from 03-themes"
 ok "Run Bitwig agent:           podman run -it --rm ${IMAGE_PREFIX}:06-agent bash"
 ok "  then: ~/.local/share/bitwig-agent/run_pipeline.sh <audio.wav>"
 

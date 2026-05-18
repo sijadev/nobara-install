@@ -8,17 +8,24 @@ __pycache__/
 *.pyo
 .venv/
 
-# ── Generated artifacts ───────────────────────────────────────────────────────
-# Kickstart generated from XML — not tracked, always regenerated
-kickstart/fedora-autoinstall.ks
+# ── RPM Build-Artefakte ───────────────────────────────────────────────────────
+# Gebaute RPMs und createrepo-Index — nicht committen, werden on-demand erzeugt
+rpm/RPMS/
+rpm/SRPMS/
+rpm/BUILD/
+rpm/BUILDROOT/
+rpm/repodata/
+*.rpm
 
-# Downloaded ISOs (large binary, not for git)
+# ── ISO / USB ─────────────────────────────────────────────────────────────────
+# Große Binaries und generierte Artefakte
 iso/
 test-results/
 
-# ── Runtime state ─────────────────────────────────────────────────────────────
+# ── Runtime state / Logs ──────────────────────────────────────────────────────
 .state/
 logs/
+test_output.log
 
 # ── macOS / editor ────────────────────────────────────────────────────────────
 .DS_Store

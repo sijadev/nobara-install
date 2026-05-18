@@ -37,7 +37,7 @@
     <name>sija</name>
     <!-- Generate with: openssl passwd -6 yourpassword -->
     <password_hash>$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0</password_hash>
-    <groups>wheel,libvirt,video,audio</groups>
+    <groups>wheel,video,audio</groups>
     <gecos>sija</gecos>
   </user>
 
@@ -51,9 +51,6 @@
     <package>gnome-shell-extension-user-theme</package>
     <package>gnome-shell-extension-dash-to-panel</package>
     <package>flatpak</package>
-    <package>virt-manager</package>
-    <package>qemu-kvm</package>
-    <package>libvirt</package>
   </packages>
 
   <!-- ── First-boot provisioning (runs as root, exactly once) ───────────── -->

@@ -3,7 +3,7 @@
 # podman-run.sh — interaktiven fedora-test Container starten
 #
 # Usage:
-#   ./scripts/podman-run.sh [OPTIONS] [-- COMMAND...]
+#   ./tools/podman-run.sh [OPTIONS] [-- COMMAND...]
 #
 # Options:
 #   --layer TAG      Image-Tag (default: 06-agent)
@@ -14,10 +14,10 @@
 #   -- CMD...        Beliebiger Befehl statt interaktiver Shell
 #
 # Beispiele:
-#   ./scripts/podman-run.sh
-#   ./scripts/podman-run.sh --layer 04-vllm
-#   ./scripts/podman-run.sh -- bash -c 'nvidia-smi'
-#   ./scripts/podman-run.sh -- bash /opt/fedora/scripts/run_pipeline.sh /tmp/audio.wav
+#   ./tools/podman-run.sh
+#   ./tools/podman-run.sh --layer 04-vllm
+#   ./tools/podman-run.sh -- bash -c 'nvidia-smi'
+#   ./tools/podman-run.sh -- bash /opt/fedora/scripts/run_pipeline.sh /tmp/audio.wav
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 

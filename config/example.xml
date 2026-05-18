@@ -37,7 +37,7 @@
     <name>sija</name>
     <!-- Generate with: openssl passwd -6 yourpassword -->
     <password_hash>$6$vIQuz3HLrh0EkSj6$KmIvhP/zN/NQfwRAiSOyl0H8mGmwrOYtwJXk0cBM98eONcgTU867DeR8NWIeRYJwGYQVCBxlkb2Sxt4dDfMKY.</password_hash>
-    <groups>wheel,libvirt,video,audio</groups>
+    <groups>wheel,video,audio</groups>
     <gecos>sija</gecos>
   </user>
 
@@ -49,9 +49,6 @@
     <package>python3-pip</package>
     <package>python3-virtualenv</package>
     <package>flatpak</package>
-    <package>virt-manager</package>
-    <package>qemu-kvm</package>
-    <package>libvirt</package>
   </packages>
 
   <!-- ── First-boot provisioning (runs as root, exactly once) ───────────── -->

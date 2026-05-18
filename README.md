@@ -10,12 +10,13 @@ Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohn
 
 | Was | Version / Bedingung |
 |---|---|
-| Fedora-basiertes Host-System | für `build-usb.sh` |
+| Host-System | Fedora Linux **oder** macOS (Intel/Apple Silicon) |
 | Python 3 | `python3`, `pip`, `venv` |
-| `sgdisk`, `mkfs.fat`, `grub2-install` | `dnf install gdisk dosfstools grub2-efi-x64` |
+| Linux: `sgdisk`, `mkfs.fat`, `grub2-install` | `dnf install gdisk dosfstools grub2-efi-x64 grub2-tools` |
+| macOS: `grub-install`, `diskutil`, `hdiutil` | `brew install grub` (`diskutil`/`hdiutil` sind systemweit vorhanden) |
 | `xorriso`, `cpio`, `zstd`, `rpm2cpio` | `dnf install xorriso cpio zstd rpm-build` |
 | USB-Stick | ≥ 8 GB, wird komplett neu formatiert |
-| Root-Rechte | `sudo scripts/build-usb.sh …` |
+| Root-Rechte | `sudo tools/build-usb.sh …` |
 
 > **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer), AMD Ryzen CPU empfohlen.  
 > Legacy-BIOS wird nicht unterstützt.
@@ -28,34 +29,39 @@ Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohn
 fedora-autoinstall/
 ├── fedora-provision.sh        # Provisioner für laufende Systeme
 ├── fedora-iso-build.sh        # Custom-ISO bauen (für dd-Flash ohne USB-Boot)
-├── Containerfile.vllm         # Custom vLLM Image (Blackwell sm_120 optimiert)
 │
 ├── boot/
-│   └── grub.cfg               # GRUB2-Menü (5 Profile: f/d/m/t/h)
+│   └── grub.cfg               # GRUB2-Menü (4 Profile: f/d/t/h)
 │
 ├── config/
 │   ├── example.xml            # Referenz-Konfiguration
 │   └── schema.xsd             # XML-Schema (Validierung)
 │
 ├── kickstart/
-│   ├── fedora-full.ks         # Vollinstallation (GNOME + NVIDIA + AI)
+│   ├── fedora-full.ks         # Vollinstallation (GNOME + NVIDIA)
 │   ├── fedora-theme-bash.ks   # GNOME + WhiteSur, kein AI
-│   ├── fedora-headless-vllm.ks# Kein GUI, Podman + Kimi-Audio + Qwen3
-│   ├── fedora-vm.ks           # VM (KVM/QEMU, vda)
+│   ├── fedora-headless-vllm.ks# Kein GUI, Podman + NVIDIA
 │   └── common-post.inc        # Gemeinsamer %post-Block
 │
 ├── lib/
 │   ├── common.sh              # Logging, dry-run, Safety-Checks
 │   └── xml2ks.py              # XML → Kickstart Konverter + Validator
 │
-├── scripts/
-│   ├── build-usb.sh           # USB-Stick einmalig aufbauen (GRUB2 + Bazzite-Kernel)
-│   ├── sync-usb.sh            # Repo → USB synchronisieren
+├── rpm/
+│   └── fedora-autoinstall.spec# RPM-Spec für Provisioning-Scripts
+│
+├── scripts/                   # Wird auf Zielsystem installiert (via RPM)
 │   ├── first-boot.sh          # Systemweite Provisionierung (root, einmalig)
 │   ├── first-login.sh         # User-Provisionierung (einmalig)
-│   ├── vm-test.sh             # VM-Test via KVM/QEMU + SSH
-│   ├── vm-test-blackwell.sh   # Headless KVM-Test: Blackwell-Boot-Simulation
-│   ├── podman-pipeline.sh     # Layered Container-Build + --build-vllm
+│   ├── welcome-dialog.sh      # GNOME Welcome-Dialog
+│   ├── vllm-router.py         # vLLM Multi-Model Router
+│   └── fedora-provision.desktop # GNOME App-Menü Eintrag
+│
+├── tools/                     # Entwickler- und Build-Werkzeuge (Dev-Rechner)
+│   ├── build-usb.sh           # USB-Stick einmalig aufbauen (GRUB2 + Bazzite-Kernel)
+│   ├── sync-usb.sh            # Repo → USB synchronisieren
+│   ├── apply_config.py        # XML-Config auf Kickstart-Dateien anwenden
+│   ├── podman-pipeline.sh     # Layered Container-Build
 │   └── podman-run.sh          # Interaktiver Container-Start
 │
 ├── systemd/
@@ -77,7 +83,7 @@ fedora-autoinstall/
 # https://fedoraproject.org/everything/download  →  iso/
 
 # USB-Stick aufbauen (formatiert, installiert GRUB2 + Bazzite-Kernel):
-sudo scripts/build-usb.sh /dev/sdX
+sudo tools/build-usb.sh /dev/sdX
 ```
 
 Was `build-usb.sh` macht:
@@ -86,6 +92,7 @@ Was `build-usb.sh` macht:
 - Bazzite-Kernel von COPR laden (RPM-Cache in `iso/kernel-cache/`)
 - Anaconda-initrd mit Bazzite-Modulen neu packen
 - Kickstart, Scripts, Systemd-Units auf USB kopieren
+- RPM-Repo (`rpm/`) auf USB kopieren
 
 Bazzite-Kernel-RPMs werden in `iso/kernel-cache/` gecacht — kein Re-Download beim nächsten Mal.
 
@@ -93,23 +100,16 @@ Bazzite-Kernel-RPMs werden in `iso/kernel-cache/` gecacht — kein Re-Download b
 
 ```bash
 # Prüfen ob Stick aktuell ist:
-scripts/sync-usb.sh --check
+tools/sync-usb.sh --check
 
-# Prüfen und bei Drift direkt deployen:
-scripts/sync-usb.sh --check-deploy
+# Synchronisieren (interaktiv mit Diff):
+tools/sync-usb.sh
 
-# Vollständiges Deploy (interaktiv, via install.sh):
-scripts/sync-usb.sh
-
-# Vollständiges Deploy ohne Rückfrage:
-scripts/sync-usb.sh --force
-
-# Nur Dateien kopieren (Legacy, ohne Rebuild der initrd):
-scripts/sync-usb.sh --files-only
+# Ohne Rückfrage:
+tools/sync-usb.sh --force
 ```
 
-> `sync-usb.sh` führt standardmäßig ein vollständiges Deploy über `install.sh` aus und aktualisiert damit den vollständigen USB-Inhalt konsistent.
-> `--check` prüft nur (Exit 1 bei Drift), `--check-deploy` prüft und deployed bei Drift automatisch.
+> **Kernel-Update:** `build-usb.sh` erneut ausführen — `sync-usb.sh` aktualisiert nur Scripts/Kickstart/Config, nicht den Kernel.
 
 ### 3. Profil wählen und installieren
 
@@ -117,11 +117,10 @@ USB einstecken → UEFI Boot → GRUB2-Menü → Hotkey drücken:
 
 | Taste | Profil | Was passiert |
 |-------|--------|-------------|
-| `f` | Vollinstallation | Anaconda → `fedora-full.ks` (GNOME + NVIDIA + AI) |
+| `f` | Vollinstallation | Anaconda → `fedora-full.ks` (GNOME + NVIDIA) |
 | `d` | Debug-Install | Text-Modus + Serial-Log + Logs auf USB |
-| `m` | VM-Test | Anaconda → `fedora-vm.ks` (KVM/QEMU) |
 | `t` | Theme + Bash | Provisioner auf bestehendem System |
-| `h` | Headless vLLM | Provisioner: Podman + Kimi-Audio + Qwen3 |
+| `h` | Headless | Provisioner: Podman + NVIDIA, kein GUI |
 
 Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO auf dem USB-Stick nötig.
 
@@ -131,7 +130,7 @@ Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO au
 # Theme + WhiteSur + Oh-My-Bash
 sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile theme-bash
 
-# Podman + Kimi-Audio-7B + Qwen3 (AI Agent)
+# Headless: NVIDIA + Podman, kein GUI
 sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile headless-vllm
 ```
 
@@ -185,18 +184,13 @@ Für tiefere Diagnose: **[d] Debug-Install** — Serial-Log landet auf dem USB-S
 ## Profile im Detail
 
 ### `full` — Vollinstallation (USB-Boot)
-Frische Neuinstallation auf leerem System. Btrfs, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash, Podman, AI-Stack.
+Frische Neuinstallation auf leerem System. Btrfs, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash, Podman.
 
 ### `theme-bash` — Theme + Bash (Provisioner)
-WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Bash. Kein AI-Stack.
+WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Bash.
 
-### `headless-vllm` — Podman + KI-Agent (Provisioner)
-NVIDIA Open Driver, CUDA, Podman mit zwei vLLM-Services:
-- **Kimi-Audio-7B** auf Port 8000 — Musik-Analyse
-- **Qwen3-14B** auf Port 8001 — Reasoning + LangGraph
-
-### `vm` — VM (intern)
-KVM/QEMU-Gast, virtio-Disk (`vda`). Für automatisierte VM-Tests.
+### `headless-vllm` — Headless (Provisioner)
+NVIDIA Open Driver, CUDA, Podman. Kein GUI.
 
 ---
 
@@ -251,112 +245,6 @@ Beim ersten Boot werden automatisch eingerichtet:
 
 ---
 
-## AI Agent: Bitwig Musik-Pipeline
-
-### Architektur
-
-```
-~/bitwig-input/  (MP3/WAV/FLAC)
-       │
-       ▼
-Kimi-Audio-7B — Port 8000 (~4 GB VRAM)
-  Musik-Analyse: Tempo, Key, Genre, Mood, Chords
-       │
-       ▼
-Neo4j — Musik-Theorie DB
-  Chord Progressions, Reference Songs, Rhythm Patterns
-       │
-       ▼
-Qwen3-14B + Thinking — Port 8001 (~5 GB VRAM)
-  <think>...</think> → LangGraph Slaves
-       │
-       ▼
-~/bitwig-output/  (.bwtemplate.json)
-```
-
-**VRAM gesamt: ~9 GB** — beide Modelle gleichzeitig in 16 GB VRAM.
-
-### Pipeline starten
-
-```bash
-# Router starten (lädt Backends on-demand)
-systemctl --user start vllm-router.service
-
-# Einzelne Datei
-~/.local/share/bitwig-agent/run_pipeline.sh ~/bitwig-input/track.mp3
-
-# Alle Dateien in ~/bitwig-input/
-~/.local/share/bitwig-agent/run_pipeline.sh
-```
-
-### LangGraph / OpenAI-Clients via vLLM-Router
-
-Eine OpenAI-kompatible API auf `:8000` mit Multi-Model Hotswap. Jedes LangGraph-Projekt
-setzt `OPENAI_BASE_URL=http://localhost:8000/v1` und wählt das Modell per Request-Body —
-der Router startet/stoppt vLLM-Backend-Container (Quadlet `vllm@<name>.service`) on-demand.
-
-```bash
-# Verfügbare Modelle anzeigen
-curl http://localhost:8000/v1/models
-
-# Chat — Backend wird beim ersten Request automatisch gestartet (30-180s Cold-Start)
-curl http://localhost:8000/v1/chat/completions -d '{
-  "model": "agent",
-  "messages": [{"role":"user","content":"hi"}]
-}'
-
-# Preload ohne Anfrage
-curl -X POST 'http://localhost:8000/admin/preload?model=agent'
-
-# Status aller Modelle (laufend / idle / VRAM-Anteil)
-curl http://localhost:8000/admin/status
-```
-
-**Neues Modell hinzufügen** — `~/.config/vllm-router/models.json`:
-
-```json
-{
-  "qwen3-14b": {
-    "hf_repo": "Qwen/Qwen3-14B-AWQ",
-    "port": 8102,
-    "vram_share": 0.55,
-    "max_len": 8192,
-    "extra": "--enable-reasoning --reasoning-parser deepseek_r1"
-  }
-}
-```
-
-```python
-# LangGraph-Beispiel
-from langchain_openai import ChatOpenAI
-llm = ChatOpenAI(base_url="http://localhost:8000/v1", model="agent", api_key="sk-anything")
-```
-
-### Custom vLLM Image (Blackwell-optimiert)
-
-```bash
-# Einmaliger Build ~30-60 Min (CUDA sm_120 für RTX 9070)
-./scripts/podman-pipeline.sh --build-vllm
-# → fedora-vllm:latest  (~10-15% mehr tokens/sec)
-```
-
----
-
-## VM-Test
-
-```bash
-# Blackwell-Boot-Simulation (headless KVM, Serial-Log-Monitoring)
-scripts/vm-test-blackwell.sh
-scripts/vm-test-blackwell.sh --keep   # VM nach Test behalten
-
-# Vollständiger Provisioner-Test
-scripts/vm-test.sh install    # Frische Installation (Anaconda)
-scripts/vm-test.sh snapshot   # Snapshot anlegen
-scripts/vm-test.sh test theme-bash  # Provisioner testen
-```
-
----
-
 ## Tests
 
 ```bash
@@ -380,8 +268,8 @@ FEDORA-USB (GRUB2 + Bazzite-Kernel)
        └─ Anaconda — stage2 vom Fedora Mirror (Netzwerk)
             ├─ %pre: Disk automatisch erkennen
             ├─ Btrfs partitionieren (@ + @home Subvolumes)
-            ├─ %post: provision.env + first-boot.sh + first-login.desktop
-            └─ %post --nochroot: fstab + Logs auf USB sichern
+            ├─ %packages: fedora-autoinstall RPM vom lokalen USB-Repo
+            └─ %post: provision.env + GNOME-Autostart
 ```
 
 ### Erster Boot (root, einmalig)
@@ -405,19 +293,18 @@ FEDORA-USB (GRUB2 + Bazzite-Kernel)
 3. WhiteSur Themes + Dash-to-Dock Konfiguration
 4. GNOME Tweaks + Night Light
 5. Oh My Bash
-6. AI-Stack (nur `full`/`headless-vllm`): PyTorch, vLLM, Modelle
 
 ---
 
 ## Disk-Erkennung
 
-Alle physischen Profile erkennen die Ziel-Disk automatisch:
+Alle Profile erkennen die Ziel-Disk automatisch:
 
 ```bash
 DISK=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1; exit}')
 ```
 
-Funktioniert für SATA (`sda`), NVMe (`nvme0n1`) und virtio (`vda`).
+Funktioniert für SATA (`sda`) und NVMe (`nvme0n1`).
 
 Override: Im GRUB `e` drücken, an die `linux`-Zeile anhängen:
 ```
@@ -431,7 +318,6 @@ inst.disk=nvme1n1
 - **NVIDIA-Treiber:** Wird erst beim ersten Boot via `akmod-nvidia-open` gebaut — nicht während der Installation.
 - **UEFI erforderlich:** Legacy-BIOS/MBR nicht unterstützt.
 - **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` ersetzen.
-- **HuggingFace-Token:** In `/etc/fedora-provision.env` als `FEDORA_HF_TOKEN` eintragen.
-- **Modell-Cache:** `~/.models/huggingface/` — bewusst von `~/.cache/` getrennt, überlebt Cache-Bereinigungen.
 - **Kernel-Cache:** `iso/kernel-cache/` — Bazzite-RPMs werden gecacht, kein Re-Download bei `build-usb.sh`.
-- **common-post.inc:** Muss mit `scripts/first-boot.sh` und `scripts/first-login.sh` synchron gehalten werden.
+- **RPM-Repo:** `rpm/fedora-autoinstall-*.noarch.rpm` + `createrepo rpm/` nach jedem Build nötig.
+

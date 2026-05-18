@@ -55,7 +55,7 @@ REQUIRED_FIELDS = [
     ("user/password_hash","Password hash"),
 ]
 
-DISK_PATTERN = re.compile(r'^/dev/(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)$')
+DISK_PATTERN = re.compile(r'^/dev/(sd[a-z]+|nvme\d+n\d+|mmcblk\d+)$')
 HOSTNAME_PATTERN = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$')
 HASH_PATTERN = re.compile(r'^\$[156]\$')
 
@@ -73,7 +73,7 @@ def validate(root: ET.Element, xml_path: Path) -> list[str]:
     disk = _get(root, "disk")
     if disk and not DISK_PATTERN.match(disk):
         errors.append(
-            "<disk> must be one of /dev/sdX, /dev/vdX, /dev/xvdX, /dev/nvmeXnY, /dev/mmcblkN "
+            "<disk> must be one of /dev/sdX, /dev/nvmeXnY, /dev/mmcblkN "
             f"(got: {disk!r})"
         )
 
@@ -120,27 +120,8 @@ def validate(root: ET.Element, xml_path: Path) -> list[str]:
 
 # ── Kickstart generation ──────────────────────────────────────────────────────
 
-def _embed_script(path: Optional[Path]) -> str:
-    """Read a script file and return its content.
-
-    Prints a warning to stderr only when a path is given but the file is missing,
-    so callers notice the omission rather than silently getting an empty heredoc.
-    Passing None is treated as "intentionally omitted" and produces no warning.
-    """
-    if path is None:
-        return ""
-    if not path.exists():
-        print(f"WARNING: script not found: {path} — heredoc will be empty", file=sys.stderr)
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
 def generate_kickstart(
     root: ET.Element,
-    first_boot_script: Optional[Path] = None,
-    first_login_script: Optional[Path] = None,
-    systemd_unit: Optional[Path] = None,
-    provision_script: Optional[Path] = None,
 ) -> str:
     disk         = _get(root, "disk")
     hostname     = _get(root, "hostname")
@@ -203,12 +184,6 @@ def generate_kickstart(
     omb_el         = root.find("first-login/ohmybash")
     omb_theme      = _attr(omb_el, "theme", "modern")
 
-    # Read embedded scripts
-    first_boot_src  = _embed_script(first_boot_script)
-    first_login_src = _embed_script(first_login_script)
-    systemd_src     = _embed_script(systemd_unit)
-    provision_src   = _embed_script(provision_script)
-
     # ── Partitioning section ──────────────────────────────────────────────────
     if part_scheme == "auto":
         # %pre erkennt die größte interne Disk automatisch
@@ -246,7 +221,7 @@ def generate_kickstart(
         if entry not in seen:
             all_packages.append(entry)
 
-    packages_block = "\n".join(all_packages)
+    packages_block = "\n".join(all_packages) + "\nfedora-autoinstall"
 
     # ── Env vars for first-login service ─────────────────────────────────────
     env_block = "\n".join([
@@ -310,6 +285,9 @@ DEOF
 text
 reboot
 
+# ── Lokales RPM-Repo auf Ventoy-USB ──────────────────────────────────────────
+repo --name=fedora-autoinstall --baseurl=file:///run/install/repo/rpm
+
 {pre_block}
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────
 keyboard --xlayouts='{keyboard}'
@@ -339,7 +317,7 @@ user --groups={groups} --name={username} --password={pw_hash} --iscrypted --geco
 %addon com_redhat_kdump --disable
 %end
 
-# ── %post: install first-boot service and first-login runner ──────────────────
+# ── %post: Env-Datei, Autostart ──────────────────────────────────────────────
 %post --log=/root/ks-post.log
 
 set -euo pipefail
@@ -353,35 +331,10 @@ cat > /etc/fedora-provision.env <<'ENVEOF'
 ENVEOF
 chmod 0644 /etc/fedora-provision.env
 
-# ── Write first-boot script ───────────────────────────────────────────────────
-cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
-{first_boot_src}
-FBEOF
-chmod 0750 /usr/local/sbin/fedora-first-boot.sh
-
-# ── Write first-login runner ──────────────────────────────────────────────────
-cat > /usr/local/bin/fedora-first-login.sh <<'FLEOF'
-{first_login_src}
-FLEOF
-chmod 0755 /usr/local/bin/fedora-first-login.sh
-
-# ── Write systemd unit for first-boot ────────────────────────────────────────
-cat > /etc/systemd/system/fedora-first-boot.service <<'UNITEOF'
-{systemd_src}
-UNITEOF
-
-systemctl enable fedora-first-boot.service
-
-# ── Write fedora-provision script ────────────────────────────────────────────
-cat > /usr/local/sbin/fedora-provision.sh <<'PROVEOF'
-{provision_src}
-PROVEOF
-chmod 0755 /usr/local/sbin/fedora-provision.sh
-
-# ── Install Extension Manager (Flatpak) at system level ──────────────────────
+# ── Flathub einrichten ────────────────────────────────────────────────────────
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 
-# ── Configure first-login autorun for target user ────────────────────────────
+# ── First-Login Autostart für Ziel-User ──────────────────────────────────────
 USER_HOME="/home/{username}"
 AUTOSTART_DIR="$USER_HOME/.config/autostart"
 mkdir -p "$AUTOSTART_DIR"
@@ -409,10 +362,6 @@ def main() -> int:
     parser.add_argument("--validate-only", metavar="XML", help="Validate XML and exit")
     parser.add_argument("--config",        metavar="XML", help="Input XML config file")
     parser.add_argument("--output",        metavar="KS",  help="Output Kickstart file")
-    parser.add_argument("--first-boot-script", metavar="SH")
-    parser.add_argument("--first-login-script", metavar="SH")
-    parser.add_argument("--systemd-unit",  metavar="UNIT")
-    parser.add_argument("--provision-script", metavar="SH")
     parser.add_argument("--get-field",     metavar="FIELD",
                         help="Print a single field value and exit")
     parser.add_argument("xml_positional",  nargs="?",
@@ -477,13 +426,7 @@ def main() -> int:
             print(f"VALIDATION ERROR: {e}", file=sys.stderr)
         return 1
 
-    ks = generate_kickstart(
-        root,
-        first_boot_script  = Path(args.first_boot_script)  if args.first_boot_script  else None,
-        first_login_script = Path(args.first_login_script) if args.first_login_script else None,
-        systemd_unit       = Path(args.systemd_unit)       if args.systemd_unit       else None,
-        provision_script   = Path(args.provision_script)   if args.provision_script   else None,
-    )
+    ks = generate_kickstart(root)
 
     if args.output:
         out = Path(args.output)

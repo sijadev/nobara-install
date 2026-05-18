@@ -153,7 +153,7 @@ if [[ "$CONFIG_MODE" == "xml" ]]; then
 elif [[ "$CONFIG_MODE" == "json" ]]; then
     [[ -f "$JSON_FILE" ]] || die "JSON-Konfiguration nicht gefunden: $JSON_FILE"
     log "JSON: $JSON_FILE"
-    err_out=$(python3 "${SCRIPT_DIR}/scripts/apply_config.py" \
+    err_out=$(python3 "${SCRIPT_DIR}/tools/apply_config.py" \
         --config "$JSON_FILE" 2>&1) && {
         log "Kickstarts aus JSON aktualisiert."
     } || {
@@ -164,4 +164,4 @@ fi
 
 # ── USB-Stick bauen ───────────────────────────────────────────────────────────
 step "USB-Stick bauen"
-exec "${SCRIPT_DIR}/scripts/build-usb.sh" "$USB_DEV"
+exec "${SCRIPT_DIR}/tools/build-usb.sh" "$USB_DEV"

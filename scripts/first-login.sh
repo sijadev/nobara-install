@@ -383,7 +383,7 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
         VLLM_IMAGE="localhost/fedora-vllm:latest"
         if ! podman image exists "$VLLM_IMAGE" 2>/dev/null; then
             warn "Custom-Image '${VLLM_IMAGE}' fehlt — bauen mit:"
-            warn "  ./scripts/podman-pipeline.sh --build-vllm"
+            warn "  ./tools/podman-pipeline.sh --build-vllm"
         fi
 
         # Router-venv + Wrapper

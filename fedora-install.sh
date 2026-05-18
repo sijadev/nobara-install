@@ -74,15 +74,15 @@ assert_podman_smoke_gate() {
     local stamp_file="$SCRIPT_DIR/.state/podman-smoke-passed.stamp"
     local current_scripts_sha stamp_config_sha stamp_layers stamp_timestamp
 
-    [[ -f "$stamp_file" ]] || die "Podman smoke gate: stamp missing ($stamp_file). Run scripts/podman-pipeline.sh first."
+    [[ -f "$stamp_file" ]] || die "Podman smoke gate: stamp missing ($stamp_file). Run tools/podman-pipeline.sh first."
 
     current_scripts_sha=$(find "$SCRIPT_DIR/config" "$SCRIPT_DIR/scripts" -type f | sort | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')
     stamp_config_sha=$(awk -F= '$1=="config_sha" {print $2}' "$stamp_file" | tail -n1)
     stamp_layers=$(awk -F= '$1=="layers" {print $2}' "$stamp_file" | tail -n1)
     stamp_timestamp=$(awk -F= '$1=="timestamp" {print $2}' "$stamp_file" | tail -n1)
 
-    [[ -n "$stamp_config_sha" ]] || die "Podman smoke gate: invalid stamp (missing config_sha). Re-run scripts/podman-pipeline.sh."
-    [[ "$stamp_config_sha" == "$current_scripts_sha" ]] || die "Podman smoke gate: scripts/config changed since last Podman run. Re-run scripts/podman-pipeline.sh."
+    [[ -n "$stamp_config_sha" ]] || die "Podman smoke gate: invalid stamp (missing config_sha). Re-run tools/podman-pipeline.sh."
+    [[ "$stamp_config_sha" == "$current_scripts_sha" ]] || die "Podman smoke gate: scripts/config changed since last Podman run. Re-run tools/podman-pipeline.sh."
 
     log_info "Podman smoke gate passed: layers=${stamp_layers} stamp_time=${stamp_timestamp}"
 }

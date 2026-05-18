@@ -152,19 +152,6 @@ class ValidateTests(unittest.TestCase):
         root = minimal_root(**{"disk": "/dev/nvme10n1"})
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
-    # virtuelle Disks (KVM/QEMU, Xen)
-    def test_accepts_vda_disk(self):
-        root = minimal_root(**{"disk": "/dev/vda"})
-        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
-
-    def test_accepts_vdb_disk(self):
-        root = minimal_root(**{"disk": "/dev/vdb"})
-        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
-
-    def test_accepts_xvda_disk(self):
-        root = minimal_root(**{"disk": "/dev/xvda"})
-        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
-
     # eMMC (Tablets, SBCs)
     def test_accepts_mmcblk_disk(self):
         root = minimal_root(**{"disk": "/dev/mmcblk0"})
@@ -328,10 +315,10 @@ class ValidateTests(unittest.TestCase):
         root = parse_xml("""
             <fedora-install>
               <iso><url>https://example.com/fedora.iso</url></iso>
-              <disk>/dev/vda</disk>
+              <disk>/dev/sda</disk>
               <partitioning>
                 <scheme>custom</scheme>
-                <kickstart_extra>ignoredisk --only-use=vda</kickstart_extra>
+                <kickstart_extra>ignoredisk --only-use=sda</kickstart_extra>
               </partitioning>
               <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
@@ -413,9 +400,9 @@ class ValidateTests(unittest.TestCase):
 class GenerateKickstartTests(unittest.TestCase):
     """Tests for generate_kickstart(). Uses minimal valid XML as baseline."""
 
-    def _ks(self, xml_text=None, **script_kwargs) -> str:
+    def _ks(self, xml_text=None) -> str:
         root = parse_xml(xml_text) if xml_text else load_fixture("minimal.xml")
-        return xml2ks.generate_kickstart(root, **script_kwargs)
+        return xml2ks.generate_kickstart(root)
 
     # ── Structure ─────────────────────────────────────────────────────────────
 
@@ -665,13 +652,11 @@ class GenerateKickstartTests(unittest.TestCase):
               </user>
               <packages>
                 <package>podman</package>
-                <package>virt-manager</package>
               </packages>
             </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("podman", ks)
-        self.assertIn("virt-manager", ks)
 
     def test_extra_groups_included(self):
         root = parse_xml("""
@@ -792,77 +777,29 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn('FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"', ks)
         self.assertIn('FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
 
-    # ── Embedded scripts ──────────────────────────────────────────────────────
+    # ── RPM-basierte Installation ─────────────────────────────────────────────
 
-    def test_embedded_scripts_included(self):
-        with tempfile.TemporaryDirectory() as td:
-            td_path = Path(td)
-            fb   = td_path / "first-boot.sh"
-            fl   = td_path / "first-login.sh"
-            unit = td_path / "first-boot.service"
-            fb.write_text("echo first-boot", encoding="utf-8")
-            fl.write_text("echo first-login", encoding="utf-8")
-            unit.write_text("[Unit]\nDescription=Test", encoding="utf-8")
+    def test_rpm_repo_directive_present(self):
+        """KS muss repo-Direktive für lokales RPM-Repo enthalten."""
+        ks = xml2ks.generate_kickstart(load_fixture("minimal.xml"))
+        self.assertIn("repo --name=fedora-autoinstall", ks)
+        self.assertIn("file:///run/install/repo/rpm", ks)
 
-            ks = xml2ks.generate_kickstart(
-                load_fixture("minimal.xml"),
-                first_boot_script=fb,
-                first_login_script=fl,
-                systemd_unit=unit,
-            )
+    def test_rpm_package_in_packages_block(self):
+        """fedora-autoinstall RPM muss im %packages Block stehen."""
+        ks = xml2ks.generate_kickstart(load_fixture("minimal.xml"))
+        # Finde den %packages Block
+        pkgs_start = ks.index("%packages")
+        pkgs_end = ks.index("%end", pkgs_start)
+        packages_block = ks[pkgs_start:pkgs_end]
+        self.assertIn("fedora-autoinstall", packages_block)
 
-        self.assertIn("echo first-boot", ks)
-        self.assertIn("echo first-login", ks)
-        self.assertIn("[Unit]", ks)
-        self.assertIn("Description=Test", ks)
-
-    def test_missing_script_file_warns_on_stderr(self):
-        """Angegebener Pfad der nicht existiert → stderr-Warnung statt stillem leerem Heredoc."""
-        import io
-        buf = io.StringIO()
-        with patch("sys.stderr", buf):
-            xml2ks.generate_kickstart(
-                load_fixture("minimal.xml"),
-                first_boot_script=Path("/nonexistent/first-boot.sh"),
-            )
-        self.assertIn("WARNING", buf.getvalue())
-        self.assertIn("nonexistent", buf.getvalue())
-
-    def test_none_script_path_produces_no_warning(self):
-        """None als Pfad = absichtlich weggelassen → keine Warnung."""
-        import io
-        buf = io.StringIO()
-        with patch("sys.stderr", buf):
-            xml2ks.generate_kickstart(
-                load_fixture("minimal.xml"),
-                first_boot_script=None,
-            )
-        self.assertNotIn("WARNING", buf.getvalue())
-
-    def test_scripts_with_real_content_embedded(self):
-        """Echte Script-Dateien müssen ihren Inhalt im Kickstart haben — kein leeres heredoc."""
-        PROJECT = Path(__file__).parent.parent
-        fb   = PROJECT / "scripts" / "first-boot.sh"
-        fl   = PROJECT / "scripts" / "first-login.sh"
-        unit = PROJECT / "systemd" / "fedora-first-boot.service"
-        if not fb.exists() or not fl.exists() or not unit.exists():
-            self.skipTest("Projekt-Scripts nicht gefunden")
-
-        ks = xml2ks.generate_kickstart(
-            load_fixture("minimal.xml"),
-            first_boot_script=fb,
-            first_login_script=fl,
-            systemd_unit=unit,
-        )
-        # Kein leeres heredoc — Script-Inhalt muss vorhanden sein
-        self.assertNotIn("<<'FBEOF'\n\nFBEOF", ks, "first-boot.sh heredoc ist leer")
-        self.assertNotIn("<<'FLEOF'\n\nFLEOF", ks, "first-login.sh heredoc ist leer")
-        self.assertNotIn("<<'UNITEOF'\n\nUNITEOF", ks, "systemd unit heredoc ist leer")
-        # Mindestens ein erkennbares Element der echten Scripts
-        self.assertTrue(
-            "set -euo pipefail" in ks or "#!/usr/bin/env bash" in ks,
-            "Kein Script-Inhalt in first-boot.sh gefunden"
-        )
+    def test_no_nochroot_block(self):
+        """KS darf keinen %post --nochroot Block mehr enthalten (RPM übernimmt das)."""
+        ks = xml2ks.generate_kickstart(load_fixture("minimal.xml"))
+        self.assertNotIn("%post --nochroot", ks)
+        self.assertNotIn("findmnt", ks)
+        self.assertNotIn("cp -r", ks)
 
     def test_autostart_desktop_entry_for_target_user(self):
         ks = self._ks()
@@ -896,7 +833,11 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("flatpak remote-add", self._ks())
 
     def test_systemd_enable_first_boot(self):
-        self.assertIn("systemctl enable fedora-first-boot.service", self._ks())
+        # systemctl enable kommt jetzt aus dem RPM %post, nicht mehr aus dem KS
+        ks = self._ks()
+        self.assertNotIn("systemctl enable fedora-first-boot.service", ks)
+        # Aber der Service-Name muss irgendwo auftauchen (autostart-desktop)
+        self.assertIn("fedora-first-login.sh", ks)
 
     # ── Full generation integration ───────────────────────────────────────────
 

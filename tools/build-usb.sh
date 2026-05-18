@@ -14,8 +14,8 @@
 # Stage2: Fedora Mirror (Netzwerk) — kein ISO auf USB nötig.
 #
 # Usage:
-#   sudo scripts/build-usb.sh /dev/sdX
-#   sudo scripts/build-usb.sh /dev/sdX --kernel-rpm /path/to/kernel.rpm
+#   sudo tools/build-usb.sh /dev/sdX
+#   sudo tools/build-usb.sh /dev/sdX --kernel-rpm /path/to/kernel.rpm
 
 set -euo pipefail
 
@@ -262,7 +262,7 @@ EARLYCFG
     echo -e "    USB einstecken → UEFI Boot → GRUB2-Menü erscheint"
     echo -e "    [f] Vollinstallation  →  Anaconda startet mit Fedora-Standard-Kernel"
     echo ""
-    echo -e "  ${BOLD}Updates:${RESET}  scripts/sync-usb.sh"
+    echo -e "  ${BOLD}Updates:${RESET}  tools/sync-usb.sh"
 }
 
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
@@ -464,4 +464,4 @@ echo -e "  ${BOLD}Nächste Schritte:${RESET}"
 echo -e "    USB einstecken → UEFI Boot → GRUB2-Menü erscheint"
 echo -e "    [f] Vollinstallation  →  Anaconda startet mit Fedora-Standard-Kernel"
 echo ""
-echo -e "  ${BOLD}Updates:${RESET}  scripts/sync-usb.sh"
+echo -e "  ${BOLD}Updates:${RESET}  tools/sync-usb.sh"
