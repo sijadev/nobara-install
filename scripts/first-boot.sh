@@ -6,9 +6,6 @@
 #
 # Tasks:
 #   1. System-Update (dnf update)
-#   2. NVIDIA Open Driver update
-#   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
-#   4. Set system-wide CUDA environment variables
 #   5. Ensure GUI boot path (graphical.target + GDM)
 
 set -euo pipefail
@@ -17,7 +14,6 @@ MARKER_DIR="/var/lib/fedora-provision"
 MARKER_FILE="$MARKER_DIR/first-boot.done"
 LOG_FILE="/var/log/fedora-first-boot.log"
 ENV_FILE="/etc/fedora-provision.env"
-CUDA_ENV_FILE="/etc/profile.d/cuda.sh"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -56,35 +52,10 @@ ensure_gui_boot_path() {
         return 0
     fi
 
-    log "Ensuring GUI boot path (graphical.target + GDM)..."
+    log "Ensuring GUI boot path (graphical.target)..."
     systemctl set-default graphical.target 2>/dev/null \
         && log "Default target set to graphical.target." \
         || warn "Failed to set default target to graphical.target."
-
-    if ! systemctl list-unit-files gdm.service >/dev/null 2>&1; then
-        warn "gdm.service not found — attempting install (non-fatal)."
-        run_dnf_retry dnf install -y gdm gnome-shell 2>/dev/null \
-            && log "gdm + gnome-shell installed." \
-            || warn "gdm install failed (non-fatal)."
-    fi
-
-    if systemctl list-unit-files gdm.service >/dev/null 2>&1; then
-        systemctl enable gdm.service 2>/dev/null \
-            && log "gdm.service enabled." \
-            || warn "Failed to enable gdm.service."
-
-        # display-manager.service is an alias/symlink target on many Fedora setups.
-        systemctl enable display-manager.service 2>/dev/null || true
-
-        if (( exit_code != 0 )); then
-            warn "Provisioning failed earlier; trying to start GDM now."
-            systemctl start gdm.service 2>/dev/null \
-                && log "gdm.service started." \
-                || warn "Failed to start gdm.service on failure path."
-        fi
-    else
-        warn "gdm.service still unavailable — GUI login may stay down."
-    fi
 }
 
 on_exit_first_boot() {
@@ -125,21 +96,13 @@ deltarpm=True
 DNFEOF
 log "DNF: max_parallel_downloads=10, fastestmirror, deltarpm."
 
-# ── 0b. Flathub einrichten (system-wide) ─────────────────────────────────────
+# ── 0b. Flathub einrichten (system-wide remote) ───────────────────────────────
 step "Flathub"
 if command -v flatpak &>/dev/null; then
     flatpak remote-add --if-not-exists --system flathub \
         https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
         && log "Flathub system-weit hinzugefügt." \
         || warn "Flathub setup fehlgeschlagen (non-fatal)."
-    # Extension Manager system-weit installieren (verfügbar für alle User)
-    if ! flatpak list --system 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
-        flatpak install --system --noninteractive flathub com.mattjakeman.ExtensionManager 2>/dev/null \
-            && log "Extension Manager (system) installiert." \
-            || warn "Extension Manager install fehlgeschlagen (non-fatal)."
-    else
-        log "Extension Manager bereits installiert."
-    fi
 fi
 
 # ── 0c. fstrim (SSD TRIM wöchentlich) ────────────────────────────────────────
@@ -196,95 +159,6 @@ if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
 else
     log "FEDORA_KERNEL_SOURCE=fedora — CachyOS-Kernel übersprungen."
 fi
-
-# ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
-step "NVIDIA Open Driver update"
-
-if [[ "$INSTALL_PROFILE" == "cachyos-kernel" ]]; then
-    log "Profile '${INSTALL_PROFILE}' — NVIDIA installation skipped."
-else
-
-# iGPU + dGPU Hinweis: Wenn beide vorhanden, lief Install vermutlich über iGPU
-# (Blackwell-Workaround). Nach erfolgreichem first-boot kann BIOS auf PEG zurück.
-if command -v lspci &>/dev/null; then
-    if lspci -nn 2>/dev/null | grep -qiE 'VGA.*(AMD|Intel)' \
-       && lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-        warn "iGPU + NVIDIA dGPU erkannt. Falls Install über iGPU lief:"
-        warn "  → Nach Reboot BIOS umstellen: Primary Display = PEG/PCIe"
-        warn "  → Monitor wieder an NVIDIA-Karte anschließen"
-    fi
-fi
-
-check_nvidia_open_compat() {
-    # Check GPU PCI IDs against architectures that support the Open Module:
-    # Turing (TU1xx), Ampere (GA1xx), Ada Lovelace (AD1xx), Blackwell (GB1xx)
-    if ! command -v lspci &>/dev/null; then
-        warn "lspci not available; skipping GPU compatibility check."
-        return 0
-    fi
-    local gpu_info
-    gpu_info=$(lspci -nn | grep -i 'NVIDIA' || true)
-    if [[ -z "$gpu_info" ]]; then
-        warn "No NVIDIA GPU detected (VM or non-NVIDIA system) — skipping NVIDIA driver."
-        return 1
-    fi
-    if echo "$gpu_info" | grep -qiE 'GP10[0-9]|GP1[0-9]{2}'; then
-        die "NVIDIA Pascal GPU detected. Open Driver requires Turing or newer. Aborting."
-    fi
-    log "NVIDIA GPU detected (Open Driver compatible): $gpu_info"
-}
-
-if check_nvidia_open_compat; then
-    # Prüfen ob NVIDIA-Treiber bereits funktionsfähig installiert ist
-    if nvidia-smi &>/dev/null; then
-        log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
-    else
-        log "Installing/updating NVIDIA Open Kernel Module driver..."
-        NVIDIA_OPEN_ONLY="${FEDORA_NVIDIA_OPEN_ONLY:-0}"
-        if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
-            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
-                run_dnf_retry dnf install -y \
-                    kernel \
-                    kernel-devel \
-                    kernel-headers \
-                    akmod-nvidia-open \
-                    || warn "NVIDIA Open-only installation fehlgeschlagen (non-fatal)."
-            else
-                run_dnf_retry dnf install -y \
-                    kernel \
-                    kernel-devel \
-                    kernel-headers \
-                    akmod-nvidia-open \
-                    xorg-x11-drv-nvidia-cuda \
-                    || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
-            fi
-        else
-            # Bei CachyOS keine Fedora kernel-devel/kernel-headers erzwingen,
-            # sonst kann es zu Devel-Mismatch-Fehlern kommen.
-            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
-                run_dnf_retry dnf install -y \
-                    kernel-cachyos \
-                    kernel-cachyos-devel \
-                    akmod-nvidia-open \
-                    || warn "NVIDIA Open-only installation (CachyOS) fehlgeschlagen (non-fatal)."
-            else
-                run_dnf_retry dnf install -y \
-                    kernel-cachyos \
-                    kernel-cachyos-devel \
-                    akmod-nvidia-open \
-                    xorg-x11-drv-nvidia-cuda \
-                    || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
-            fi
-        fi
-
-        if command -v akmods &>/dev/null; then
-            log "Building kernel modules (akmods)..."
-            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
-        fi
-        log "NVIDIA Open Driver installed/updated."
-    fi
-fi  # end: check_nvidia_open_compat
-fi  # end: profile gate for NVIDIA
 
 # ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
@@ -375,101 +249,102 @@ REGEOF
     log "Aktivierung erfolgt im first-login (loginctl linger + enable)."
 fi
 
-# ── 3. CUDA installation (immer NVIDIA-Repo) ──────────────────────────────────
-step "CUDA installation"
+# ── 2. NVIDIA Open Driver + CUDA (nvidia-cuda Profil) ────────────────────────
+if [[ "$INSTALL_PROFILE" == "nvidia-cuda" ]]; then
+    step "NVIDIA Open Driver"
 
-install_cuda_nvidia_repo() {
-    log "Installing CUDA from official NVIDIA repo..."
-    local arch; arch=$(uname -m)
-    local fedora_version
-    fedora_version=$(. /etc/os-release && echo "$VERSION_ID")
-    local distro="fedora${fedora_version}"
-    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
+    if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+        warn "Kein NVIDIA GPU erkannt — NVIDIA/CUDA Installation übersprungen."
+    else
+        run_dnf_retry dnf install -y \
+            kernel-cachyos \
+            kernel-cachyos-devel \
+            akmod-nvidia-open \
+            xorg-x11-drv-nvidia-cuda \
+            && log "NVIDIA Open Driver + xorg-cuda installiert." \
+            || warn "NVIDIA Open Driver Installation fehlgeschlagen (non-fatal)."
 
-    # Prüfe ob Repo für aktuelle Fedora-Version existiert, sonst Fallback auf fedora43
-    if ! curl -sfI "$repo_url" >/dev/null; then
-        log "Kein CUDA-Repo für Fedora ${fedora_version} gefunden — Fallback auf Fedora 43."
-        distro="fedora43"
-        repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
-    fi
-    log "CUDA-Repo: ${repo_url}"
+        if command -v akmods &>/dev/null; then
+            log "Building kernel modules (akmods)..."
+            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
+        fi
 
-    if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
-        # Fallback für dnf5
-        dnf config-manager addrepo --from-repofile="$repo_url" \
-            || die "Failed to add NVIDIA CUDA repo."
-    fi
+        step "CUDA Toolkit (NVIDIA-Repo)"
+        CUDA_ARCH=$(uname -m)
+        CUDA_FEDORA_VER=$(. /etc/os-release && echo "$VERSION_ID")
+        CUDA_DISTRO="fedora${CUDA_FEDORA_VER}"
+        CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_ARCH}/cuda-${CUDA_DISTRO}.repo"
 
-    run_dnf_retry dnf makecache || true
-    if run_dnf_retry dnf install -y cuda-toolkit; then
-        return 0
-    fi
-    # Einige Repo-Snapshots exponieren nur das Meta-Paket `cuda`
-    run_dnf_retry dnf install -y cuda || die "CUDA installation from NVIDIA repo failed."
-}
+        if ! curl -sfI "$CUDA_REPO_URL" >/dev/null; then
+            log "Kein CUDA-Repo für Fedora ${CUDA_FEDORA_VER} — Fallback auf fedora43."
+            CUDA_DISTRO="fedora43"
+            CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_ARCH}/cuda-${CUDA_DISTRO}.repo"
+        fi
 
-if [[ "$INSTALL_PROFILE" =~ ^(theme-bash|cachyos-kernel)$ ]]; then
-    log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
-elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
-else
-    install_cuda_nvidia_repo
-fi
+        if ! dnf config-manager --add-repo "$CUDA_REPO_URL" 2>/dev/null; then
+            dnf config-manager addrepo --from-repofile="$CUDA_REPO_URL" \
+                || warn "CUDA-Repo konnte nicht hinzugefügt werden."
+        fi
 
-# Discover installed CUDA path
-CUDA_HOME_DETECTED=""
-# Fedora-Repo CUDA: nvcc unter /usr/bin, Libs unter /usr/lib64
-# NVIDIA-Repo CUDA: unter /usr/local/cuda*
-for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
-    if [[ -x "${candidate}/bin/nvcc" ]]; then
-        CUDA_HOME_DETECTED="$candidate"
-        break
-    fi
-done
-if [[ -z "$CUDA_HOME_DETECTED" ]]; then
-    warn "nvcc not found after CUDA installation — skipping CUDA environment setup."
-else
-    log "CUDA installed at: $CUDA_HOME_DETECTED"
+        run_dnf_retry dnf makecache || true
+        run_dnf_retry dnf install -y cuda-toolkit \
+            && log "CUDA Toolkit installiert." \
+            || warn "CUDA Toolkit Installation fehlgeschlagen (non-fatal)."
 
-    CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
-        | grep -oP 'release \K[\d.]+' | head -1)
-    log "CUDA version: $CUDA_VERSION_INSTALLED"
-
-    # ── 4. System-wide CUDA environment variables ─────────────────────────────
-    step "CUDA environment variables"
-
-    cat > "$CUDA_ENV_FILE" <<ENVEOF
-# Fedora Auto-Install: CUDA environment — managed by fedora-first-boot.sh
+        # System-weite CUDA Umgebungsvariablen
+        CUDA_HOME_DETECTED=""
+        for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
+            if [[ -x "${candidate}/bin/nvcc" ]]; then
+                CUDA_HOME_DETECTED="$candidate"; break
+            fi
+        done
+        if [[ -n "$CUDA_HOME_DETECTED" ]]; then
+            cat > /etc/profile.d/cuda.sh <<ENVEOF
 export CUDA_HOME="${CUDA_HOME_DETECTED}"
 export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
 export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 ENVEOF
-    chmod 0644 "$CUDA_ENV_FILE"
-    log "CUDA env written to $CUDA_ENV_FILE"
+            chmod 0644 /etc/profile.d/cuda.sh
+            log "CUDA Umgebung gesetzt: ${CUDA_HOME_DETECTED}"
+        fi
 
-    # Also write a systemd-compatible EnvironmentFile entry
-    mkdir -p /etc/systemd/system.conf.d
-    cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
-# CUDA environment for systemd services
-[Manager]
-DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
-SYSENVEOF
-    systemctl daemon-reload
+        # NVIDIA Persistence Mode Service
+        cat > /etc/systemd/system/nvidia-performance.service <<'NVEOF'
+[Unit]
+Description=NVIDIA Persistence Mode
+After=multi-user.target
+ConditionPathExists=/usr/bin/nvidia-smi
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-smi -pm 1
+ExecStop=/usr/bin/nvidia-smi  -pm 0
+
+[Install]
+WantedBy=multi-user.target
+NVEOF
+        systemctl daemon-reload
+        systemctl enable nvidia-performance.service 2>/dev/null \
+            && log "nvidia-performance.service aktiviert." \
+            || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
+    fi
 fi
 
-# ── 4b. Theme-Abhängigkeiten + GNOME Extensions ─────────────────────────────
+# ── 4b. Theme-Abhängigkeiten + GNOME Extensions ──────────────────────────────
 step "Theme dependencies + GNOME Extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
     run_dnf_retry dnf install -y \
         sassc \
         glib2-devel \
+        zenity \
         gnome-shell-extension-user-theme \
         gnome-shell-extension-dash-to-dock \
+        gnome-shell-extension-caffeine \
         gnome-shell-extension-appindicator \
         gnome-shell-extension-blur-my-shell \
-        gnome-shell-extension-caffeine \
         2>/dev/null \
-        && log "Theme deps + GNOME extensions installiert." \
+        && log "Theme deps + GNOME Extensions installiert." \
         || warn "Theme deps/extensions install fehlgeschlagen (non-fatal)."
 fi
 
@@ -589,30 +464,6 @@ SCXEOF
     systemctl enable scx-bpfland.service 2>/dev/null \
         && log "scx-bpfland.service aktiviert." \
         || warn "scx-bpfland enable fehlgeschlagen (non-fatal)."
-fi
-
-# ── 7. NVIDIA Persistence Mode ────────────────────────────────────────────────
-if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    step "NVIDIA persistence mode"
-    cat > /etc/systemd/system/nvidia-performance.service <<'NVEOF'
-[Unit]
-Description=NVIDIA Persistence Mode
-After=multi-user.target
-ConditionPathExists=/usr/bin/nvidia-smi
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/nvidia-smi -pm 1
-ExecStop=/usr/bin/nvidia-smi  -pm 0
-
-[Install]
-WantedBy=multi-user.target
-NVEOF
-    systemctl daemon-reload
-    systemctl enable nvidia-performance.service 2>/dev/null \
-        && log "nvidia-performance.service aktiviert." \
-        || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
 fi
 
 # ── 8. WhiteSur GRUB Theme ───────────────────────────────────────────────────
@@ -797,6 +648,65 @@ AMDEOF
     fi
 else
     log "Kein AMD CPU erkannt — AMD Ryzen Optimierungen übersprungen."
+fi
+
+# ── First-Login Setup ────────────────────────────────────────────────────────
+step "First-Login Setup"
+TARGET_USER="${FEDORA_TARGET_USER:-sija}"
+USER_HOME="/home/${TARGET_USER}"
+REPO_DIR="/usr/local/share/fedora-autoinstall"
+
+# first-login.sh ins System installieren
+if [[ -f "${REPO_DIR}/scripts/first-login.sh" ]]; then
+    install -m 0755 "${REPO_DIR}/scripts/first-login.sh" /usr/local/sbin/fedora-first-login.sh
+    log "fedora-first-login.sh installiert."
+else
+    warn "first-login.sh nicht gefunden unter ${REPO_DIR}/scripts/ — Autostart nicht eingerichtet."
+fi
+
+# welcome-dialog.sh + fedora-provision.desktop system-weit installieren
+# → App erscheint dauerhaft im GNOME App-Menü
+if [[ -f "${REPO_DIR}/scripts/welcome-dialog.sh" ]]; then
+    install -m 0755 "${REPO_DIR}/scripts/welcome-dialog.sh" /usr/local/bin/fedora-welcome-dialog.sh
+    log "fedora-welcome-dialog.sh installiert."
+fi
+if [[ -f "${REPO_DIR}/scripts/fedora-provision.desktop" ]]; then
+    install -m 0644 "${REPO_DIR}/scripts/fedora-provision.desktop" \
+        /usr/share/applications/fedora-provision.desktop
+    update-desktop-database /usr/share/applications/ 2>/dev/null || true
+    log "fedora-provision.desktop in /usr/share/applications/ installiert."
+fi
+
+# Autostart-Desktop-Datei für den Ziel-User einrichten
+AUTOSTART_DIR="${USER_HOME}/.config/autostart"
+MARKER="${USER_HOME}/.local/share/fedora-provision/first-login.done"
+if [[ ! -f "$MARKER" ]] && [[ -x /usr/local/sbin/fedora-first-login.sh ]]; then
+    mkdir -p "$AUTOSTART_DIR"
+    cat > "${AUTOSTART_DIR}/fedora-first-login.desktop" <<'DEOF'
+[Desktop Entry]
+Type=Application
+Name=Fedora First Login
+Exec=/usr/local/sbin/fedora-first-login.sh
+Icon=preferences-system
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+DEOF
+    chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
+    log "Autostart-Eintrag gesetzt: ${AUTOSTART_DIR}/fedora-first-login.desktop"
+fi
+
+# Sudoers-Regel: sija darf GNOME Extension RPMs ohne Passwort installieren
+SUDOERS_FILE="/etc/sudoers.d/fedora-first-login"
+if [[ ! -f "$SUDOERS_FILE" ]]; then
+    cat > "$SUDOERS_FILE" <<SUDEOF
+# Allows ${TARGET_USER} to run dnf without password during first-login
+${TARGET_USER} ALL=(root) NOPASSWD: /usr/bin/dnf
+SUDEOF
+    chmod 0440 "$SUDOERS_FILE"
+    visudo -c -f "$SUDOERS_FILE" \
+        && log "sudoers: ${TARGET_USER} NOPASSWD dnf install gesetzt." \
+        || { warn "sudoers-Datei ungültig — wird entfernt."; rm -f "$SUDOERS_FILE"; }
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────

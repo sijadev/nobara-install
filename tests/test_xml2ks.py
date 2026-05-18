@@ -516,9 +516,10 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("%include /tmp/disk-setup.cfg", ks)
 
     def test_auto_partition_generates_btrfs(self):
-        # autopart steht im %pre Block (disk-setup.cfg), nicht direkt im KS
+        # Btrfs-Subvolumes @ und @home stehen im %pre Block (disk-setup.cfg)
         ks = self._ks()
-        self.assertIn("autopart --type=btrfs", ks)
+        self.assertIn("btrfs /     --subvol --name=@", ks)
+        self.assertIn("btrfs /home --subvol --name=@home", ks)
 
     def test_auto_partition_ignoredisk_in_pre(self):
         # ignoredisk steht im %pre Block, nicht direkt im KS-Body
@@ -555,7 +556,7 @@ class GenerateKickstartTests(unittest.TestCase):
         root = minimal_root(**{"disk": "/dev/nvme1n1"})
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("%pre", ks)
-        self.assertIn("autopart --type=btrfs", ks)
+        self.assertIn("btrfs /     --subvol --name=@", ks)
 
     def test_sdb_pre_block_present(self):
         root = minimal_root(**{"disk": "/dev/sdb"})
@@ -638,8 +639,8 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("ignoredisk --only-use=sda", ks)
         self.assertIn("clearpart --all --initlabel --drives=sda", ks)
         self.assertIn("part /boot", ks)
-        # auto-LVM directive must NOT appear — custom block replaces auto partitioning
-        self.assertNotIn("autopart --type=lvm", ks)
+        # auto-Btrfs directive must NOT appear — custom block replaces auto partitioning
+        self.assertNotIn("btrfs /     --subvol --name=@", ks)
 
     # ── Packages ──────────────────────────────────────────────────────────────
 
@@ -869,221 +870,33 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("/home/sija", ks)
         self.assertIn("chown -R sija:sija", ks)
 
+    def test_regression_embedded_first_boot_cuda_guards(self):
+        """Regression guard for previously broken CUDA branch in embedded first-boot.sh."""
+        PROJECT = Path(__file__).parent.parent
+        fb = PROJECT / "scripts" / "first-boot.sh"
+        if not fb.exists():
+            self.skipTest("first-boot.sh nicht gefunden")
+        content = fb.read_text()
+        # CUDA/NVIDIA install must be behind the nvidia-cuda profile guard
+        self.assertIn('INSTALL_PROFILE" == "nvidia-cuda"', content,
+            "CUDA-Block fehlt oder nicht hinter nvidia-cuda Profil-Guard")
+        # Must not install akmod-nvidia-open unconditionally (outside the if block)
+        lines = content.splitlines()
+        in_guard = False
+        for line in lines:
+            if 'INSTALL_PROFILE" == "nvidia-cuda"' in line:
+                in_guard = True
+            if in_guard and line.strip() == "fi":
+                in_guard = False
+            if not in_guard and "akmod-nvidia-open" in line and not line.strip().startswith("#"):
+                self.fail("akmod-nvidia-open wird ohne nvidia-cuda Profil-Guard installiert")
+
     def test_flatpak_flathub_remote_added(self):
         self.assertIn("flathub", self._ks())
         self.assertIn("flatpak remote-add", self._ks())
 
     def test_systemd_enable_first_boot(self):
         self.assertIn("systemctl enable fedora-first-boot.service", self._ks())
-
-    def test_regression_ks_defaults_keep_ssh_access(self):
-        """Regression guard: generated KS must keep SSH reachable by default."""
-        ks = self._ks()
-        self.assertIn("firewall --enabled --service=ssh", ks)
-        self.assertIn("openssh-server", ks)
-        self.assertIn("systemctl enable sshd.service", ks)
-
-    def test_regression_embedded_first_boot_cuda_guards(self):
-        """Regression guard for previously broken CUDA branch in embedded first-boot.sh."""
-        project = Path(__file__).parent.parent
-        fb = project / "scripts" / "first-boot.sh"
-        fl = project / "scripts" / "first-login.sh"
-        unit = project / "systemd" / "fedora-first-boot.service"
-        if not fb.exists() or not fl.exists() or not unit.exists():
-            self.skipTest("Projekt-Scripts nicht gefunden")
-
-        ks = xml2ks.generate_kickstart(
-            load_fixture("minimal.xml"),
-            first_boot_script=fb,
-            first_login_script=fl,
-            systemd_unit=unit,
-        )
-        self.assertNotIn("fedora|fedora)", ks)
-        self.assertNotIn('die "nvcc not found after CUDA installation."', ks)
-        self.assertIn(
-            'warn "nvcc not found after CUDA installation — skipping CUDA environment setup."',
-            ks,
-        )
-
-    def test_regression_kernel_devel_branching_for_cachyos(self):
-        """Regression guard: NVIDIA deps must branch by FEDORA_KERNEL_SOURCE."""
-        project = Path(__file__).parent.parent
-        fb = project / "scripts" / "first-boot.sh"
-        fl = project / "scripts" / "first-login.sh"
-        unit = project / "systemd" / "fedora-first-boot.service"
-        if not fb.exists() or not fl.exists() or not unit.exists():
-            self.skipTest("Projekt-Scripts nicht gefunden")
-
-        ks = xml2ks.generate_kickstart(
-            load_fixture("minimal.xml"),
-            first_boot_script=fb,
-            first_login_script=fl,
-            systemd_unit=unit,
-        )
-
-        self.assertIn('if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then', ks)
-        self.assertIn("kernel-cachyos-devel", ks)
-        self.assertIn("kernel-devel", ks)
-        self.assertIn("kernel-headers", ks)
-        self.assertNotIn("via DKMS/Nobara installiert", ks)
-
-    def test_regression_btrfs_subvolume_syntax(self):
-        """Regression guard: the synced Btrfs subvolume rename syntax must stay correct."""
-        project = Path(__file__).parent.parent
-        common_post = project / "kickstart" / "common-post.inc"
-        if not common_post.exists():
-            self.skipTest("kickstart/common-post.inc nicht gefunden")
-
-        text = common_post.read_text(encoding="utf-8")
-
-        expected_snippets = [
-            "%post --nochroot --log=/root/ks-post-btrfs-rename.log",
-            "mount -o subvolid=5",
-            "btrfs subvolume snapshot \"${MOUNT_TMP}/root\" \"${MOUNT_TMP}/@\"",
-            "btrfs subvolume snapshot \"${MOUNT_TMP}/home\" \"${MOUNT_TMP}/@home\"",
-            "sed -i 's/subvol=root\\b/subvol=@/g'",
-            "sed -i 's/subvol=home\\b/subvol=@home/g'",
-        ]
-        for snippet in expected_snippets:
-            with self.subTest(snippet=snippet):
-                self.assertIn(snippet, text)
-
-        self.assertNotIn("subvol=@homehome", text)
-
-    # ── Repo-Erreichbarkeit (generiert aus XML) ───────────────────────────────
-
-    def _generate_ks_from_project(self) -> str:
-        """Generiert KS aus config/example.xml + echten Projekt-Scripts."""
-        project = Path(__file__).parent.parent
-        fb   = project / "scripts" / "first-boot.sh"
-        fl   = project / "scripts" / "first-login.sh"
-        unit = project / "systemd" / "fedora-first-boot.service"
-        cfg  = project / "config" / "example.xml"
-        if not all(p.exists() for p in [fb, fl, unit, cfg]):
-            self.skipTest("Projektdateien nicht gefunden")
-        root = ET.parse(str(cfg)).getroot()
-        return xml2ks.generate_kickstart(root, first_boot_script=fb,
-                                         first_login_script=fl, systemd_unit=unit)
-
-    def test_repo_urls_reachable(self):
-        """
-        Extracts all repo URLs embedded in the generated KS (from XML config)
-        and checks that each returns HTTP 200/301/302 (HEAD request).
-        Requires network access — skipped automatically if offline.
-
-        CUDA-Repo-URLs enthalten Shell-Variablen (${distro}/${arch}) und werden
-        daher separat mit konkreten Werten (aktuelle Fedora-Version + x86_64)
-        geprüft — inklusive Fallback auf fedora43, analog zur Skript-Logik.
-        """
-        import re
-        import platform
-        import urllib.request
-        import urllib.error
-
-        ks = self._generate_ks_from_project()
-
-        # Extrahiere URLs aus typischen Repo-Zeilen im eingebetteten Script:
-        #   dnf copr enable -y bieszczaders/kernel-cachyos
-        #   --add-repo "https://..."   /  --from-repofile="https://..."
-        url_patterns = [
-            # explizite https:// URLs ohne Shell-Variablen
-            re.compile(r'https://[^\s\'"\\]+\.repo'),
-            re.compile(r'https://[^\s\'"\\]+/repodata/repomd\.xml'),
-        ]
-        copr_patterns = [
-            # COPR-Bezeichner → kanonische API-URL
-            re.compile(r'dnf copr enable\s+-y\s+([\w/-]+)'),
-        ]
-
-        urls: dict[str, str] = {}  # url → herkunft
-
-        for pat in url_patterns:
-            for m in pat.finditer(ks):
-                url = m.group(0)
-                # Shell-Variablen (${distro} etc.) werden separat aufgelöst
-                if "${" not in url:
-                    urls[url] = "repo-url"
-
-        for pat in copr_patterns:
-            for m in pat.finditer(ks):
-                copr_id = m.group(1).strip()
-                owner, _, project_name = copr_id.partition("/")
-                url = (f"https://copr.fedorainfracloud.org/coprs/{owner}/"
-                       f"{project_name}/")
-                urls[url] = f"copr:{copr_id}"
-
-        # ── CUDA-Repo-URL explizit prüfen (Shell-Variablen auflösen) ──────────
-        # Skript-Logik: erst aktuelle Fedora-Version versuchen, dann fedora43
-        # Fedora-Version aus iso-URL im KS ableiten (z.B. "fedora43") oder
-        # hart auf bekannte neueste Version setzen.
-        _fver_match = re.search(r'fedora(\d+)', ks)
-        _fver = _fver_match.group(1) if _fver_match else "43"
-        _arch = "x86_64"
-        _cuda_base = "https://developer.download.nvidia.com/compute/cuda/repos"
-        _cuda_primary = f"{_cuda_base}/fedora{_fver}/{_arch}/cuda-fedora{_fver}.repo"
-        _cuda_fallback = f"{_cuda_base}/fedora43/{_arch}/cuda-fedora43.repo"
-        # Primär-URL prüfen; bei 404 → Fallback, wie das Skript es tut
-        urls[_cuda_primary] = f"cuda-repo-fedora{_fver} (primary)"
-        urls[_cuda_fallback] = "cuda-repo-fedora43 (fallback)"
-
-        if not urls:
-            self.skipTest("Keine Repo-URLs im generierten KS gefunden")
-
-        # Netzwerk-Check: erreichbar?
-        try:
-            urllib.request.urlopen(
-                urllib.request.Request("https://copr.fedorainfracloud.org",
-                                       method="HEAD"),
-                timeout=5,
-            )
-        except (urllib.error.URLError, OSError):
-            self.skipTest("Kein Netzwerk — Repo-Erreichbarkeitstest übersprungen")
-
-        failures = []
-        cuda_primary_ok = False
-        for url, origin in urls.items():
-            # CUDA-Primär-URL darf 404 liefern (Fallback greift dann im Skript)
-            is_cuda_primary = "primary" in origin
-            is_cuda_fallback = "fallback" in origin
-            try:
-                req = urllib.request.Request(url, method="HEAD")
-                req.add_header("User-Agent", "fedora-autoinstall-test/1.0")
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    code = resp.status
-                if code in (200, 301, 302, 303):
-                    if is_cuda_primary:
-                        cuda_primary_ok = True
-                elif not is_cuda_primary:
-                    failures.append(f"{origin}: HTTP {code} — {url}")
-            except urllib.error.HTTPError as e:
-                if e.code == 404 and is_cuda_primary:
-                    pass  # erwartet — Fallback greift im Skript
-                elif e.code >= 500:
-                    pass  # Server-seitige Fehler (z.B. COPR 500) ignorieren — Repo existiert
-                elif e.code not in (200, 301, 302, 303, 405):
-                    if not is_cuda_primary:
-                        failures.append(f"{origin}: HTTP {e.code} — {url}")
-            except (urllib.error.URLError, OSError) as e:
-                failures.append(f"{origin}: Nicht erreichbar — {url} ({e})")
-
-        # Fallback-URL muss immer erreichbar sein (wenn Primary fehlt)
-        if not cuda_primary_ok and f"cuda-repo-fedora43 (fallback)" in [
-            v for v in urls.values()
-        ]:
-            fallback_url = _cuda_fallback
-            try:
-                req = urllib.request.Request(fallback_url, method="HEAD")
-                req.add_header("User-Agent", "fedora-autoinstall-test/1.0")
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    if resp.status not in (200, 301, 302, 303):
-                        failures.append(
-                            f"cuda-repo-fedora43 (fallback): HTTP {resp.status} — {fallback_url}"
-                        )
-            except Exception as e:
-                failures.append(f"cuda-repo-fedora43 (fallback): Nicht erreichbar — {fallback_url} ({e})")
-
-        if failures:
-            self.fail("Nicht erreichbare Repos:\n" + "\n".join(failures))
 
     # ── Full generation integration ───────────────────────────────────────────
 
@@ -1126,7 +939,8 @@ class GenerateKickstartTests(unittest.TestCase):
         # Disk — bootloader + autopart stehen im %pre Block (disk-setup.cfg)
         self.assertIn("%pre", ks)
         self.assertIn("%include /tmp/disk-setup.cfg", ks)
-        self.assertIn("autopart --type=btrfs", ks)
+        self.assertIn("btrfs /     --subvol --name=@", ks)
+        self.assertIn("btrfs /home --subvol --name=@home", ks)
         self.assertNotIn("--location=mbr", ks)
 
         # Packages

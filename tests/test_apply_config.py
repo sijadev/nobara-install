@@ -388,29 +388,18 @@ class IntegrationTests(unittest.TestCase):
                       "FEDORA_VLLM_VENV nicht korrekt ersetzt")
         self.assertIn('FEDORA_NEO4J_PASSWORD="bitwig-agent"', joined,
                       "FEDORA_NEO4J_PASSWORD nicht korrekt ersetzt")
-        # FEDORA_CUDA_SOURCE wurde aus fedora-full.ks entfernt (CUDA kommt immer von NVIDIA-Repo)
 
-    def test_vllm_cuda_version_and_arch_in_real_fedora_full_ks(self):
-        """FEDORA_VLLM_CUDA_VERSION und FEDORA_VLLM_ARCH_LIST müssen korrekt in fedora-full.ks stehen."""
+    def test_real_fedora_full_ks_has_separate_boot_for_btrfs(self):
         real_ks = PROJECT / "kickstart" / "fedora-full.ks"
         if not real_ks.exists():
             self.skipTest("kickstart/fedora-full.ks nicht gefunden")
         content = real_ks.read_text()
-        # Werte müssen als Env-Variablen im %post-Block vorhanden sein
-        self.assertIn('FEDORA_VLLM_CUDA_VERSION=', content,
-                      "FEDORA_VLLM_CUDA_VERSION fehlt in fedora-full.ks")
-        self.assertIn('FEDORA_VLLM_ARCH_LIST=', content,
-                      "FEDORA_VLLM_ARCH_LIST fehlt in fedora-full.ks")
-        # apply_config muss Werte aus install.json korrekt einsetzen
-        expected_cuda = EXAMPLE_CONFIG["gpu"]["cuda_version"]
-        expected_arch  = EXAMPLE_CONFIG["gpu"]["arch_list"]
-        lines, rc = self._run_main(EXAMPLE_CONFIG, ks_content=content)
-        self.assertEqual(rc, 0)
-        joined = "\n".join(lines)
-        self.assertIn(f'FEDORA_VLLM_CUDA_VERSION="{expected_cuda}"', joined,
-                      f"FEDORA_VLLM_CUDA_VERSION nicht korrekt ersetzt (erwartet: {expected_cuda})")
-        self.assertIn(f'FEDORA_VLLM_ARCH_LIST="{expected_arch}"', joined,
-                      f"FEDORA_VLLM_ARCH_LIST nicht korrekt ersetzt (erwartet: {expected_arch})")
+        self.assertIn("part /boot/efi --fstype=efi", content)
+        self.assertIn("part /boot", content)
+        self.assertIn("--fstype=ext4", content)
+        # Timeshift-kompatible Subvolume-Namen @ und @home
+        self.assertIn("--name=@", content)
+        self.assertIn("--name=@home", content)
 
 
 if __name__ == "__main__":

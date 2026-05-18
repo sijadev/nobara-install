@@ -75,22 +75,23 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "GNOME steps 1-5 skipped. Oh-My-Bash + AI steps will run via systemd service."
 fi
 
-# ── 1. Flathub + Flatpak Extension Manager ────────────────────────────────────
+# ── 1. Flathub + Flatpak Extension Manager (als User) ────────────────────────
 step "Flathub + Extension Manager"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
 else
-    flatpak remote-add --if-not-exists flathub \
-        https://flathub.org/ 2>/dev/null \
+    # Flathub als user-Remote einbinden (system-Remote reicht nicht für --user install)
+    flatpak remote-add --user --if-not-exists flathub \
+        https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
         && log "Flathub remote eingebunden." \
         || warn "Flathub remote-add fehlgeschlagen (non-fatal)."
 
-    flatpak install flathub com.mattjakeman.ExtensionManager 2>/dev/null \
-        && log "Extension Manager installiert." \
+    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
+        && log "Extension Manager (user) installiert." \
         || warn "Extension Manager install fehlgeschlagen (non-fatal)."
 fi
 
-# ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
+# ── 2. GNOME extensions aktivieren (RPMs wurden in first-boot installiert) ───
 step "GNOME extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."

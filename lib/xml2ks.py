@@ -140,6 +140,7 @@ def generate_kickstart(
     first_boot_script: Optional[Path] = None,
     first_login_script: Optional[Path] = None,
     systemd_unit: Optional[Path] = None,
+    provision_script: Optional[Path] = None,
 ) -> str:
     disk         = _get(root, "disk")
     hostname     = _get(root, "hostname")
@@ -206,6 +207,7 @@ def generate_kickstart(
     first_boot_src  = _embed_script(first_boot_script)
     first_login_src = _embed_script(first_login_script)
     systemd_src     = _embed_script(systemd_unit)
+    provision_src   = _embed_script(provision_script)
 
     # ── Partitioning section ──────────────────────────────────────────────────
     if part_scheme == "auto":
@@ -289,7 +291,12 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=btrfs
+part /boot/efi --fstype=efi  --size=512
+part /boot     --fstype=ext4 --size=1024
+part btrfs.01  --fstype=btrfs --grow
+btrfs none  --label=fedora btrfs.01
+btrfs /     --subvol --name=@ LABEL=fedora
+btrfs /home --subvol --name=@home LABEL=fedora
 DEOF
 %end
 """
@@ -365,6 +372,12 @@ UNITEOF
 
 systemctl enable fedora-first-boot.service
 
+# ── Write fedora-provision script ────────────────────────────────────────────
+cat > /usr/local/sbin/fedora-provision.sh <<'PROVEOF'
+{provision_src}
+PROVEOF
+chmod 0755 /usr/local/sbin/fedora-provision.sh
+
 # ── Install Extension Manager (Flatpak) at system level ──────────────────────
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 
@@ -381,7 +394,7 @@ Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOPEOF
-chown -R {username}:{username} "$AUTOSTART_DIR"
+chown -R {username}:{username} "$USER_HOME/.config"
 
 %end
 """
@@ -399,6 +412,7 @@ def main() -> int:
     parser.add_argument("--first-boot-script", metavar="SH")
     parser.add_argument("--first-login-script", metavar="SH")
     parser.add_argument("--systemd-unit",  metavar="UNIT")
+    parser.add_argument("--provision-script", metavar="SH")
     parser.add_argument("--get-field",     metavar="FIELD",
                         help="Print a single field value and exit")
     parser.add_argument("xml_positional",  nargs="?",
@@ -468,6 +482,7 @@ def main() -> int:
         first_boot_script  = Path(args.first_boot_script)  if args.first_boot_script  else None,
         first_login_script = Path(args.first_login_script) if args.first_login_script else None,
         systemd_unit       = Path(args.systemd_unit)       if args.systemd_unit       else None,
+        provision_script   = Path(args.provision_script)   if args.provision_script   else None,
     )
 
     if args.output:

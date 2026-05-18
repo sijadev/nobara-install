@@ -21,7 +21,12 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=btrfs
+part /boot/efi --fstype=efi  --size=512
+part /boot     --fstype=ext4 --size=1024
+part btrfs.01  --fstype=btrfs --grow
+btrfs none  --label=fedora btrfs.01
+btrfs /     --subvol --name=@ LABEL=fedora
+btrfs /home --subvol --name=@home LABEL=fedora
 DEOF
 %end
 
@@ -83,7 +88,7 @@ cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
 FEDORA_KERNEL_SOURCE="cachyos"
 FEDORA_CUDA_SOURCE="nvidia"
-FEDORA_VLLM_CUDA_VERSION="13.0"
+FEDORA_VLLM_CUDA_VERSION="13.2"
 FEDORA_VLLM_ARCH_LIST="12.0"
 FEDORA_VLLM_ROUTER_PORT="8000"
 FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"
@@ -92,7 +97,7 @@ FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
 FEDORA_PYTORCH_VENV="~/.venvs/ai"
 FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"
 FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"
-FEDORA_WS_GTK_ARGS="-l -c Dark"
+FEDORA_WS_GTK_ARGS="-c Dark"
 FEDORA_WS_ICON_ARGS="-dark"
 FEDORA_WS_WALL_ARGS=""
 FEDORA_OMB_THEME="modern"
@@ -112,9 +117,6 @@ cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
 #
 # Tasks:
 #   1. System-Update (dnf update)
-#   2. NVIDIA Open Driver update
-#   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
-#   4. Set system-wide CUDA environment variables
 #   5. Ensure GUI boot path (graphical.target + GDM)
 
 set -euo pipefail
@@ -123,7 +125,6 @@ MARKER_DIR="/var/lib/fedora-provision"
 MARKER_FILE="$MARKER_DIR/first-boot.done"
 LOG_FILE="/var/log/fedora-first-boot.log"
 ENV_FILE="/etc/fedora-provision.env"
-CUDA_ENV_FILE="/etc/profile.d/cuda.sh"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -162,35 +163,10 @@ ensure_gui_boot_path() {
         return 0
     fi
 
-    log "Ensuring GUI boot path (graphical.target + GDM)..."
+    log "Ensuring GUI boot path (graphical.target)..."
     systemctl set-default graphical.target 2>/dev/null \
         && log "Default target set to graphical.target." \
         || warn "Failed to set default target to graphical.target."
-
-    if ! systemctl list-unit-files gdm.service >/dev/null 2>&1; then
-        warn "gdm.service not found — attempting install (non-fatal)."
-        run_dnf_retry dnf install -y gdm gnome-shell 2>/dev/null \
-            && log "gdm + gnome-shell installed." \
-            || warn "gdm install failed (non-fatal)."
-    fi
-
-    if systemctl list-unit-files gdm.service >/dev/null 2>&1; then
-        systemctl enable gdm.service 2>/dev/null \
-            && log "gdm.service enabled." \
-            || warn "Failed to enable gdm.service."
-
-        # display-manager.service is an alias/symlink target on many Fedora setups.
-        systemctl enable display-manager.service 2>/dev/null || true
-
-        if (( exit_code != 0 )); then
-            warn "Provisioning failed earlier; trying to start GDM now."
-            systemctl start gdm.service 2>/dev/null \
-                && log "gdm.service started." \
-                || warn "Failed to start gdm.service on failure path."
-        fi
-    else
-        warn "gdm.service still unavailable — GUI login may stay down."
-    fi
 }
 
 on_exit_first_boot() {
@@ -231,21 +207,13 @@ deltarpm=True
 DNFEOF
 log "DNF: max_parallel_downloads=10, fastestmirror, deltarpm."
 
-# ── 0b. Flathub einrichten (system-wide) ─────────────────────────────────────
+# ── 0b. Flathub einrichten (system-wide remote) ───────────────────────────────
 step "Flathub"
 if command -v flatpak &>/dev/null; then
     flatpak remote-add --if-not-exists --system flathub \
         https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
         && log "Flathub system-weit hinzugefügt." \
         || warn "Flathub setup fehlgeschlagen (non-fatal)."
-    # Extension Manager system-weit installieren (verfügbar für alle User)
-    if ! flatpak list --system 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
-        flatpak install --system --noninteractive flathub com.mattjakeman.ExtensionManager 2>/dev/null \
-            && log "Extension Manager (system) installiert." \
-            || warn "Extension Manager install fehlgeschlagen (non-fatal)."
-    else
-        log "Extension Manager bereits installiert."
-    fi
 fi
 
 # ── 0c. fstrim (SSD TRIM wöchentlich) ────────────────────────────────────────
@@ -302,95 +270,6 @@ if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
 else
     log "FEDORA_KERNEL_SOURCE=fedora — CachyOS-Kernel übersprungen."
 fi
-
-# ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
-step "NVIDIA Open Driver update"
-
-if [[ "$INSTALL_PROFILE" == "cachyos-kernel" ]]; then
-    log "Profile '${INSTALL_PROFILE}' — NVIDIA installation skipped."
-else
-
-# iGPU + dGPU Hinweis: Wenn beide vorhanden, lief Install vermutlich über iGPU
-# (Blackwell-Workaround). Nach erfolgreichem first-boot kann BIOS auf PEG zurück.
-if command -v lspci &>/dev/null; then
-    if lspci -nn 2>/dev/null | grep -qiE 'VGA.*(AMD|Intel)' \
-       && lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-        warn "iGPU + NVIDIA dGPU erkannt. Falls Install über iGPU lief:"
-        warn "  → Nach Reboot BIOS umstellen: Primary Display = PEG/PCIe"
-        warn "  → Monitor wieder an NVIDIA-Karte anschließen"
-    fi
-fi
-
-check_nvidia_open_compat() {
-    # Check GPU PCI IDs against architectures that support the Open Module:
-    # Turing (TU1xx), Ampere (GA1xx), Ada Lovelace (AD1xx), Blackwell (GB1xx)
-    if ! command -v lspci &>/dev/null; then
-        warn "lspci not available; skipping GPU compatibility check."
-        return 0
-    fi
-    local gpu_info
-    gpu_info=$(lspci -nn | grep -i 'NVIDIA' || true)
-    if [[ -z "$gpu_info" ]]; then
-        warn "No NVIDIA GPU detected (VM or non-NVIDIA system) — skipping NVIDIA driver."
-        return 1
-    fi
-    if echo "$gpu_info" | grep -qiE 'GP10[0-9]|GP1[0-9]{2}'; then
-        die "NVIDIA Pascal GPU detected. Open Driver requires Turing or newer. Aborting."
-    fi
-    log "NVIDIA GPU detected (Open Driver compatible): $gpu_info"
-}
-
-if check_nvidia_open_compat; then
-    # Prüfen ob NVIDIA-Treiber bereits funktionsfähig installiert ist
-    if nvidia-smi &>/dev/null; then
-        log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
-    else
-        log "Installing/updating NVIDIA Open Kernel Module driver..."
-        NVIDIA_OPEN_ONLY="${FEDORA_NVIDIA_OPEN_ONLY:-0}"
-        if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
-            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
-                run_dnf_retry dnf install -y \
-                    kernel \
-                    kernel-devel \
-                    kernel-headers \
-                    akmod-nvidia-open \
-                    || warn "NVIDIA Open-only installation fehlgeschlagen (non-fatal)."
-            else
-                run_dnf_retry dnf install -y \
-                    kernel \
-                    kernel-devel \
-                    kernel-headers \
-                    akmod-nvidia-open \
-                    xorg-x11-drv-nvidia-cuda \
-                    || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
-            fi
-        else
-            # Bei CachyOS keine Fedora kernel-devel/kernel-headers erzwingen,
-            # sonst kann es zu Devel-Mismatch-Fehlern kommen.
-            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
-                run_dnf_retry dnf install -y \
-                    kernel-cachyos \
-                    kernel-cachyos-devel \
-                    akmod-nvidia-open \
-                    || warn "NVIDIA Open-only installation (CachyOS) fehlgeschlagen (non-fatal)."
-            else
-                run_dnf_retry dnf install -y \
-                    kernel-cachyos \
-                    kernel-cachyos-devel \
-                    akmod-nvidia-open \
-                    xorg-x11-drv-nvidia-cuda \
-                    || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
-            fi
-        fi
-
-        if command -v akmods &>/dev/null; then
-            log "Building kernel modules (akmods)..."
-            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
-        fi
-        log "NVIDIA Open Driver installed/updated."
-    fi
-fi  # end: check_nvidia_open_compat
-fi  # end: profile gate for NVIDIA
 
 # ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
@@ -481,101 +360,102 @@ REGEOF
     log "Aktivierung erfolgt im first-login (loginctl linger + enable)."
 fi
 
-# ── 3. CUDA installation (immer NVIDIA-Repo) ──────────────────────────────────
-step "CUDA installation"
+# ── 2. NVIDIA Open Driver + CUDA (nvidia-cuda Profil) ────────────────────────
+if [[ "$INSTALL_PROFILE" == "nvidia-cuda" ]]; then
+    step "NVIDIA Open Driver"
 
-install_cuda_nvidia_repo() {
-    log "Installing CUDA from official NVIDIA repo..."
-    local arch; arch=$(uname -m)
-    local fedora_version
-    fedora_version=$(. /etc/os-release && echo "$VERSION_ID")
-    local distro="fedora${fedora_version}"
-    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
+    if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+        warn "Kein NVIDIA GPU erkannt — NVIDIA/CUDA Installation übersprungen."
+    else
+        run_dnf_retry dnf install -y \
+            kernel-cachyos \
+            kernel-cachyos-devel \
+            akmod-nvidia-open \
+            xorg-x11-drv-nvidia-cuda \
+            && log "NVIDIA Open Driver + xorg-cuda installiert." \
+            || warn "NVIDIA Open Driver Installation fehlgeschlagen (non-fatal)."
 
-    # Prüfe ob Repo für aktuelle Fedora-Version existiert, sonst Fallback auf fedora43
-    if ! curl -sfI "$repo_url" >/dev/null; then
-        log "Kein CUDA-Repo für Fedora ${fedora_version} gefunden — Fallback auf Fedora 43."
-        distro="fedora43"
-        repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
-    fi
-    log "CUDA-Repo: ${repo_url}"
+        if command -v akmods &>/dev/null; then
+            log "Building kernel modules (akmods)..."
+            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
+        fi
 
-    if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
-        # Fallback für dnf5
-        dnf config-manager addrepo --from-repofile="$repo_url" \
-            || die "Failed to add NVIDIA CUDA repo."
-    fi
+        step "CUDA Toolkit (NVIDIA-Repo)"
+        CUDA_ARCH=$(uname -m)
+        CUDA_FEDORA_VER=$(. /etc/os-release && echo "$VERSION_ID")
+        CUDA_DISTRO="fedora${CUDA_FEDORA_VER}"
+        CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_ARCH}/cuda-${CUDA_DISTRO}.repo"
 
-    run_dnf_retry dnf makecache || true
-    if run_dnf_retry dnf install -y cuda-toolkit; then
-        return 0
-    fi
-    # Einige Repo-Snapshots exponieren nur das Meta-Paket `cuda`
-    run_dnf_retry dnf install -y cuda || die "CUDA installation from NVIDIA repo failed."
-}
+        if ! curl -sfI "$CUDA_REPO_URL" >/dev/null; then
+            log "Kein CUDA-Repo für Fedora ${CUDA_FEDORA_VER} — Fallback auf fedora43."
+            CUDA_DISTRO="fedora43"
+            CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_ARCH}/cuda-${CUDA_DISTRO}.repo"
+        fi
 
-if [[ "$INSTALL_PROFILE" =~ ^(theme-bash|cachyos-kernel)$ ]]; then
-    log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
-elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
-else
-    install_cuda_nvidia_repo
-fi
+        if ! dnf config-manager --add-repo "$CUDA_REPO_URL" 2>/dev/null; then
+            dnf config-manager addrepo --from-repofile="$CUDA_REPO_URL" \
+                || warn "CUDA-Repo konnte nicht hinzugefügt werden."
+        fi
 
-# Discover installed CUDA path
-CUDA_HOME_DETECTED=""
-# Fedora-Repo CUDA: nvcc unter /usr/bin, Libs unter /usr/lib64
-# NVIDIA-Repo CUDA: unter /usr/local/cuda*
-for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
-    if [[ -x "${candidate}/bin/nvcc" ]]; then
-        CUDA_HOME_DETECTED="$candidate"
-        break
-    fi
-done
-if [[ -z "$CUDA_HOME_DETECTED" ]]; then
-    warn "nvcc not found after CUDA installation — skipping CUDA environment setup."
-else
-    log "CUDA installed at: $CUDA_HOME_DETECTED"
+        run_dnf_retry dnf makecache || true
+        run_dnf_retry dnf install -y cuda-toolkit \
+            && log "CUDA Toolkit installiert." \
+            || warn "CUDA Toolkit Installation fehlgeschlagen (non-fatal)."
 
-    CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
-        | grep -oP 'release \K[\d.]+' | head -1)
-    log "CUDA version: $CUDA_VERSION_INSTALLED"
-
-    # ── 4. System-wide CUDA environment variables ─────────────────────────────
-    step "CUDA environment variables"
-
-    cat > "$CUDA_ENV_FILE" <<ENVEOF
-# Fedora Auto-Install: CUDA environment — managed by fedora-first-boot.sh
+        # System-weite CUDA Umgebungsvariablen
+        CUDA_HOME_DETECTED=""
+        for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
+            if [[ -x "${candidate}/bin/nvcc" ]]; then
+                CUDA_HOME_DETECTED="$candidate"; break
+            fi
+        done
+        if [[ -n "$CUDA_HOME_DETECTED" ]]; then
+            cat > /etc/profile.d/cuda.sh <<ENVEOF
 export CUDA_HOME="${CUDA_HOME_DETECTED}"
 export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
 export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 ENVEOF
-    chmod 0644 "$CUDA_ENV_FILE"
-    log "CUDA env written to $CUDA_ENV_FILE"
+            chmod 0644 /etc/profile.d/cuda.sh
+            log "CUDA Umgebung gesetzt: ${CUDA_HOME_DETECTED}"
+        fi
 
-    # Also write a systemd-compatible EnvironmentFile entry
-    mkdir -p /etc/systemd/system.conf.d
-    cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
-# CUDA environment for systemd services
-[Manager]
-DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
-SYSENVEOF
-    systemctl daemon-reload
+        # NVIDIA Persistence Mode Service
+        cat > /etc/systemd/system/nvidia-performance.service <<'NVEOF'
+[Unit]
+Description=NVIDIA Persistence Mode
+After=multi-user.target
+ConditionPathExists=/usr/bin/nvidia-smi
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-smi -pm 1
+ExecStop=/usr/bin/nvidia-smi  -pm 0
+
+[Install]
+WantedBy=multi-user.target
+NVEOF
+        systemctl daemon-reload
+        systemctl enable nvidia-performance.service 2>/dev/null \
+            && log "nvidia-performance.service aktiviert." \
+            || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
+    fi
 fi
 
-# ── 4b. Theme-Abhängigkeiten + GNOME Extensions ─────────────────────────────
+# ── 4b. Theme-Abhängigkeiten + GNOME Extensions ──────────────────────────────
 step "Theme dependencies + GNOME Extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
     run_dnf_retry dnf install -y \
         sassc \
         glib2-devel \
+        zenity \
         gnome-shell-extension-user-theme \
         gnome-shell-extension-dash-to-dock \
+        gnome-shell-extension-caffeine \
         gnome-shell-extension-appindicator \
         gnome-shell-extension-blur-my-shell \
-        gnome-shell-extension-caffeine \
         2>/dev/null \
-        && log "Theme deps + GNOME extensions installiert." \
+        && log "Theme deps + GNOME Extensions installiert." \
         || warn "Theme deps/extensions install fehlgeschlagen (non-fatal)."
 fi
 
@@ -695,30 +575,6 @@ SCXEOF
     systemctl enable scx-bpfland.service 2>/dev/null \
         && log "scx-bpfland.service aktiviert." \
         || warn "scx-bpfland enable fehlgeschlagen (non-fatal)."
-fi
-
-# ── 7. NVIDIA Persistence Mode ────────────────────────────────────────────────
-if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    step "NVIDIA persistence mode"
-    cat > /etc/systemd/system/nvidia-performance.service <<'NVEOF'
-[Unit]
-Description=NVIDIA Persistence Mode
-After=multi-user.target
-ConditionPathExists=/usr/bin/nvidia-smi
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/nvidia-smi -pm 1
-ExecStop=/usr/bin/nvidia-smi  -pm 0
-
-[Install]
-WantedBy=multi-user.target
-NVEOF
-    systemctl daemon-reload
-    systemctl enable nvidia-performance.service 2>/dev/null \
-        && log "nvidia-performance.service aktiviert." \
-        || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
 fi
 
 # ── 8. WhiteSur GRUB Theme ───────────────────────────────────────────────────
@@ -905,6 +761,64 @@ else
     log "Kein AMD CPU erkannt — AMD Ryzen Optimierungen übersprungen."
 fi
 
+# ── First-Login Setup ────────────────────────────────────────────────────────
+step "First-Login Setup"
+TARGET_USER="${FEDORA_TARGET_USER:-sija}"
+USER_HOME="/home/${TARGET_USER}"
+REPO_DIR="/usr/local/share/fedora-autoinstall"
+
+# first-login.sh ins System installieren
+if [[ -f "${REPO_DIR}/scripts/first-login.sh" ]]; then
+    install -m 0755 "${REPO_DIR}/scripts/first-login.sh" /usr/local/sbin/fedora-first-login.sh
+    log "fedora-first-login.sh installiert."
+else
+    warn "first-login.sh nicht gefunden unter ${REPO_DIR}/scripts/ — Autostart nicht eingerichtet."
+fi
+
+# welcome-dialog.sh + fedora-provision.desktop system-weit installieren
+# → App erscheint dauerhaft im GNOME App-Menü
+if [[ -f "${REPO_DIR}/scripts/welcome-dialog.sh" ]]; then
+    install -m 0755 "${REPO_DIR}/scripts/welcome-dialog.sh" /usr/local/bin/fedora-welcome-dialog.sh
+    log "fedora-welcome-dialog.sh installiert."
+fi
+if [[ -f "${REPO_DIR}/scripts/fedora-provision.desktop" ]]; then
+    install -m 0644 "${REPO_DIR}/scripts/fedora-provision.desktop" \
+        /usr/local/share/applications/fedora-provision.desktop
+    log "fedora-provision.desktop in /usr/local/share/applications/ installiert."
+fi
+
+# Autostart-Desktop-Datei für den Ziel-User einrichten
+AUTOSTART_DIR="${USER_HOME}/.config/autostart"
+MARKER="${USER_HOME}/.local/share/fedora-provision/first-login.done"
+if [[ ! -f "$MARKER" ]] && [[ -x /usr/local/sbin/fedora-first-login.sh ]]; then
+    mkdir -p "$AUTOSTART_DIR"
+    cat > "${AUTOSTART_DIR}/fedora-first-login.desktop" <<'DEOF'
+[Desktop Entry]
+Type=Application
+Name=Fedora First Login
+Exec=/usr/local/sbin/fedora-first-login.sh
+Icon=preferences-system
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+DEOF
+    chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
+    log "Autostart-Eintrag gesetzt: ${AUTOSTART_DIR}/fedora-first-login.desktop"
+fi
+
+# Sudoers-Regel: sija darf GNOME Extension RPMs ohne Passwort installieren
+SUDOERS_FILE="/etc/sudoers.d/fedora-first-login"
+if [[ ! -f "$SUDOERS_FILE" ]]; then
+    cat > "$SUDOERS_FILE" <<SUDEOF
+# Allows ${TARGET_USER} to run dnf without password during first-login
+${TARGET_USER} ALL=(root) NOPASSWD: /usr/bin/dnf
+SUDEOF
+    chmod 0440 "$SUDOERS_FILE"
+    visudo -c -f "$SUDOERS_FILE" \
+        && log "sudoers: ${TARGET_USER} NOPASSWD dnf install gesetzt." \
+        || { warn "sudoers-Datei ungültig — wird entfernt."; rm -f "$SUDOERS_FILE"; }
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 step "First-boot provisioning complete"
 marker_set() { mkdir -p "$(dirname "$1")"; touch "$1"; }
@@ -994,22 +908,23 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "GNOME steps 1-5 skipped. Oh-My-Bash + AI steps will run via systemd service."
 fi
 
-# ── 1. Flathub + Flatpak Extension Manager ────────────────────────────────────
+# ── 1. Flathub + Flatpak Extension Manager (als User) ────────────────────────
 step "Flathub + Extension Manager"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
 else
-    flatpak remote-add --if-not-exists flathub \
-        https://flathub.org/ 2>/dev/null \
+    # Flathub als user-Remote einbinden (system-Remote reicht nicht für --user install)
+    flatpak remote-add --user --if-not-exists flathub \
+        https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
         && log "Flathub remote eingebunden." \
         || warn "Flathub remote-add fehlgeschlagen (non-fatal)."
 
-    flatpak install flathub com.mattjakeman.ExtensionManager 2>/dev/null \
-        && log "Extension Manager installiert." \
+    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
+        && log "Extension Manager (user) installiert." \
         || warn "Extension Manager install fehlgeschlagen (non-fatal)."
 fi
 
-# ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
+# ── 2. GNOME extensions aktivieren (RPMs wurden in first-boot installiert) ───
 step "GNOME extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
@@ -1372,21 +1287,22 @@ chmod 0755 /usr/local/bin/fedora-first-login.sh
 # ── Write systemd unit for first-boot ────────────────────────────────────────
 cat > /etc/systemd/system/fedora-first-boot.service <<'UNITEOF'
 [Unit]
-Description=Fedora First-Boot Provisioning (one-shot)
+Description=Fedora First-Boot Provisioning
 Documentation=https://github.com/user/fedora-install
 After=network-online.target
 Wants=network-online.target
-# Ensure this runs only on first boot; marker file disables it on subsequent boots
+# Runs only once; marker disables it on subsequent boots
 ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
 
 [Service]
-Type=oneshot
+# Type=simple: service is "active" as soon as the process starts.
+# This allows graphical.target/GDM to proceed while provisioning runs in background.
+Type=simple
 ExecStart=/usr/local/sbin/fedora-first-boot.sh
 EnvironmentFile=-/etc/fedora-provision.env
 StandardOutput=journal+console
 StandardError=journal+console
 TimeoutStartSec=3600
-RemainAfterExit=yes
 
 # Prevent privilege escalation
 NoNewPrivileges=yes
@@ -1399,6 +1315,252 @@ WantedBy=multi-user.target
 UNITEOF
 
 systemctl enable fedora-first-boot.service
+
+# ── Write fedora-provision script ────────────────────────────────────────────
+cat > /usr/local/sbin/fedora-provision.sh <<'PROVEOF'
+#!/usr/bin/env bash
+# fedora-provision.sh — Provisioniert ein bestehendes Fedora-System
+#
+# Dieses Skript wird vom Ventoy-USB-Stick aus im LAUFENDEN System gestartet.
+# Es installiert KEIN neues OS — es richtet das gewählte Profil auf dem
+# bereits installierten System ein und startet die Provisionierung.
+#
+# Nutzung:
+#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
+#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
+#
+# Optionen:
+#   --profile   theme-bash | headless-vllm | cachyos-kernel  (erforderlich)
+#   --user      Ziel-Benutzer (Standard: $SUDO_USER)
+#   --run-now   first-boot sofort starten statt nur einrichten
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── Farben ────────────────────────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+    GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
+    CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+else
+    GREEN=''; YELLOW=''; RED=''; CYAN=''; BOLD=''; RESET=''
+fi
+
+log()  { echo -e "${GREEN}[INFO]${RESET}  $*"; }
+warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+die()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
+
+# ── Argument-Parsing ──────────────────────────────────────────────────────────
+PROFILE=""
+TARGET_USER="${SUDO_USER:-${USER}}"
+RUN_NOW=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile)  PROFILE="$2";      shift 2 ;;
+        --user)     TARGET_USER="$2";  shift 2 ;;
+        --run-now)  RUN_NOW=1;         shift   ;;
+        -h|--help)
+            grep '^#' "$0" | sed 's/^# \?//'
+            exit 0 ;;
+        *) die "Unbekannte Option: $1" ;;
+    esac
+done
+
+[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: theme-bash | headless-vllm | cachyos-kernel"
+[[ "$EUID" -ne 0 ]] && die "Bitte als root ausführen: sudo bash $0 --profile $PROFILE"
+id "$TARGET_USER" &>/dev/null || die "Benutzer nicht gefunden: $TARGET_USER"
+
+USER_HOME="/home/${TARGET_USER}"
+
+# ── Profil → Umgebungsvariablen ───────────────────────────────────────────────
+step "Profil: ${PROFILE}  Benutzer: ${TARGET_USER}"
+
+case "$PROFILE" in
+    theme-bash)
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="theme-bash"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_OMB_THEME="modern"
+FEDORA_WS_GTK_ARGS="-c Dark"
+FEDORA_WS_ICON_ARGS=""
+FEDORA_WS_WALL_ARGS=""
+FEDORA_CUDA_SOURCE="fedora"
+FEDORA_KERNEL_SOURCE="fedora"
+FEDORA_NVIDIA_OPEN_ONLY="1"
+ENVEOF
+        ;;
+    nvidia-cuda)
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="nvidia-cuda"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_KERNEL_SOURCE="cachyos"
+ENVEOF
+        ;;
+        die "Profil 'vllm-only' wurde entfernt (keine GPU-Unterstützung ohne NVIDIA). Verwende 'headless-vllm'."
+        ;;
+    headless-vllm)
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="headless-vllm"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
+FEDORA_AGENT_MODEL="Qwen/Qwen3-8B"
+FEDORA_VLLM_ROUTER_PORT="8000"
+FEDORA_VLLM_REGISTRY="\$HOME/.config/vllm-router/models.json"
+FEDORA_OMB_THEME="modern"
+FEDORA_CUDA_SOURCE="nvidia"
+FEDORA_KERNEL_SOURCE="cachyos"
+FEDORA_NVIDIA_OPEN_ONLY="0"
+ENVEOF
+        ;;
+    cachyos-kernel)
+    cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="cachyos-kernel"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_KERNEL_SOURCE="cachyos"
+FEDORA_NVIDIA_OPEN_ONLY="1"
+ENVEOF
+    ;;
+    *)
+    die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: theme-bash | headless-vllm | cachyos-kernel"
+        ;;
+esac
+
+chmod 0644 /etc/fedora-provision.env
+log "/etc/fedora-provision.env geschrieben"
+
+# ── Scripts vom USB installieren ──────────────────────────────────────────────
+step "Scripts installieren"
+
+SCRIPTS_SRC="${SCRIPT_DIR}/scripts"
+SYSTEMD_SRC="${SCRIPT_DIR}/systemd"
+
+install_file() {
+    local src="$1" dest="$2" mode="$3"
+    if [[ -f "$src" ]]; then
+        cp "$src" "$dest"
+        chmod "$mode" "$dest"
+        log "  $(basename "$dest")"
+    else
+        warn "  Nicht gefunden: $src"
+    fi
+}
+
+install_file "${SCRIPTS_SRC}/first-boot.sh"  /usr/local/sbin/fedora-first-boot.sh  0750
+install_file "${SCRIPTS_SRC}/first-login.sh" /usr/local/bin/fedora-first-login.sh  0755
+
+# ── Systemd First-Boot Service ────────────────────────────────────────────────
+step "Systemd Service"
+
+if [[ -f "${SYSTEMD_SRC}/fedora-first-boot.service" ]]; then
+    cp "${SYSTEMD_SRC}/fedora-first-boot.service" /etc/systemd/system/
+else
+    cat > /etc/systemd/system/fedora-first-boot.service <<'UNITEOF'
+[Unit]
+Description=Fedora First-Boot Provisioning (one-shot)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/fedora-first-boot.sh
+EnvironmentFile=-/etc/fedora-provision.env
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=3600
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+fi
+
+# Marker zurücksetzen damit first-boot für dieses Profil erneut läuft
+rm -f /var/lib/fedora-provision/first-boot.done
+
+systemctl daemon-reload
+systemctl enable fedora-first-boot.service
+log "fedora-first-boot.service aktiviert"
+
+# ── First-Login: GUI vs. Headless ─────────────────────────────────────────────
+step "First-Login einrichten"
+
+# Alten first-login-Marker zurücksetzen
+rm -f "${USER_HOME}/.local/share/fedora-provision/first-login.done"
+
+if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
+    # GUI-Profile: GNOME-Autostart
+    AUTOSTART_DIR="${USER_HOME}/.config/autostart"
+    mkdir -p "$AUTOSTART_DIR"
+    cat > "${AUTOSTART_DIR}/fedora-first-login.desktop" <<DESKTOPEOF
+[Desktop Entry]
+Type=Application
+Name=Fedora First-Login Setup
+Exec=/usr/local/bin/fedora-first-login.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+DESKTOPEOF
+    chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
+    log "GNOME-Autostart für '${TARGET_USER}' eingerichtet"
+elif [[ "$PROFILE" == "cachyos-kernel" ]]; then
+    log "First-Login für Profil 'cachyos-kernel' übersprungen (nur Kernel-Setup)."
+else
+    # Headless-Profile: systemd User-Service
+    cat > /etc/systemd/system/fedora-provision-user.service <<USRUNITEOF
+[Unit]
+Description=Fedora User Provisioning (${PROFILE})
+After=fedora-first-boot.service network-online.target
+Requires=fedora-first-boot.service
+ConditionPathExists=!${USER_HOME}/.local/share/fedora-provision/first-login.done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=${TARGET_USER}
+Group=${TARGET_USER}
+Environment=HOME=${USER_HOME}
+EnvironmentFile=-/etc/fedora-provision.env
+ExecStart=/usr/local/bin/fedora-first-login.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=7200
+
+[Install]
+WantedBy=multi-user.target
+USRUNITEOF
+    systemctl enable fedora-provision-user.service
+    log "fedora-provision-user.service aktiviert"
+fi
+
+# ── Flatpak Flathub (GUI-Profile) ─────────────────────────────────────────────
+if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
+    flatpak remote-add --if-not-exists flathub \
+        https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+fi
+
+# ── Sofort starten (optional) ─────────────────────────────────────────────────
+if [[ "$RUN_NOW" == "1" ]]; then
+    step "First-Boot sofort starten"
+    systemctl start fedora-first-boot.service
+    log "first-boot gestartet — Logs: journalctl -fu fedora-first-boot.service"
+else
+    echo ""
+    log "Einrichtung abgeschlossen."
+    echo ""
+    echo -e "  ${BOLD}Nächster Schritt:${RESET}"
+    echo -e "    Neu starten  →  Provisionierung startet automatisch"
+    echo ""
+    echo -e "  ${BOLD}Oder sofort starten:${RESET}"
+    echo -e "    sudo systemctl start fedora-first-boot.service"
+    echo -e "    journalctl -fu fedora-first-boot.service"
+fi
+
+PROVEOF
+chmod 0755 /usr/local/sbin/fedora-provision.sh
 
 # ── Install Extension Manager (Flatpak) at system level ──────────────────────
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
@@ -1416,6 +1578,6 @@ Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOPEOF
-chown -R sija:sija "$AUTOSTART_DIR"
+chown -R sija:sija "$USER_HOME/.config"
 
 %end

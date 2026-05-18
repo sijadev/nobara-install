@@ -71,6 +71,13 @@ FEDORA_KERNEL_SOURCE="fedora"
 FEDORA_NVIDIA_OPEN_ONLY="1"
 ENVEOF
         ;;
+    nvidia-cuda)
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="nvidia-cuda"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_KERNEL_SOURCE="cachyos"
+ENVEOF
+        ;;
     vllm-only)
         die "Profil 'vllm-only' wurde entfernt (keine GPU-Unterstützung ohne NVIDIA). Verwende 'headless-vllm'."
         ;;
@@ -138,13 +145,12 @@ Wants=network-online.target
 ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/local/sbin/fedora-first-boot.sh
 EnvironmentFile=-/etc/fedora-provision.env
 StandardOutput=journal+console
 StandardError=journal+console
 TimeoutStartSec=3600
-RemainAfterExit=yes
 User=root
 
 [Install]

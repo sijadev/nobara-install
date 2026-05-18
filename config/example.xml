@@ -48,8 +48,6 @@
     <package>python3</package>
     <package>python3-pip</package>
     <package>python3-virtualenv</package>
-    <package>gnome-shell-extension-user-theme</package>
-    <package>gnome-shell-extension-dash-to-panel</package>
     <package>flatpak</package>
     <package>virt-manager</package>
     <package>qemu-kvm</package>
@@ -58,21 +56,20 @@
 
   <!-- ── First-boot provisioning (runs as root, exactly once) ───────────── -->
   <first-boot>
-    <!-- System-Update via dnf upgrade -->
+    <!-- System-Update via dnf update -->
     <dnf-upgrade enabled="true"/>
 
-    <!-- Install/update NVIDIA Open Kernel Module driver -->
-    <!-- Supported: Turing (RTX 20xx), Ampere (RTX 30xx), Ada (RTX 40xx), Blackwell (RTX 50xx) -->
-    <!-- On failure: hard error, no proprietary fallback -->
-    <nvidia-open enabled="true"/>
+    <!-- NVIDIA Open Driver + CUDA: selected interactively via welcome dialog -->
+    <!-- profile "nvidia-cuda" installs: akmod-nvidia-open, xorg-x11-drv-nvidia-cuda, cuda-toolkit -->
+    <nvidia-open enabled="false"/>
 
     <!-- Custom kernel (optional) -->
     <kernel source="cachyos"/>
     <!-- source="cachyos" → CachyOS kernel (BORE-Scheduler, Blackwell-Support) -->
     <!-- source="fedora"  → Stock Fedora kernel                                -->
 
-    <!-- Install CUDA toolkit (always from official NVIDIA repo) -->
-    <cuda enabled="true"/>
+    <!-- CUDA toolkit: installed via nvidia-cuda profile in welcome dialog, not here -->
+    <cuda enabled="false"/>
   </first-boot>
 
   <!-- ── First-login provisioning (runs as user sija, exactly once) ─────── -->
@@ -88,7 +85,8 @@
     <!-- Missing args will be prompted interactively; errors are non-fatal -->
     <whitesur enabled="true">
       <!-- Appended to: ./install.sh -d ~/.local/share/themes <gtk-args> -->
-      <gtk-args>-l -c Dark</gtk-args>
+      <!-- Note: -l (libadwaita) flag omitted — requires active GNOME session -->
+      <gtk-args>-c Dark</gtk-args>
       <!-- Appended to: ./install.sh -d ~/.local/share/icons <icon-args> -->
       <icon-args>-dark</icon-args>
       <!-- Appended to: ./install.sh <wallpaper-args> -->
@@ -101,9 +99,9 @@
     <!-- PyTorch venv at ~/.venvs/ai (CUDA-aware, latest stable) -->
     <pytorch-venv enabled="true" path="~/.venvs/ai"/>
 
-    <!-- vLLM: isolated venv, built against CUDA 13.0, sm120 (RTX 5070 Ti) -->
+    <!-- vLLM: isolated venv, built against CUDA 13.2, sm120 (RTX 5070 Ti) -->
     <vllm-omni enabled="true" venv="~/.venvs/bitwig-omni">
-      <cuda-version>13.0</cuda-version>
+      <cuda-version>13.2</cuda-version>
       <!-- TORCH_CUDA_ARCH_LIST — sm120 = Blackwell (RTX 5070 Ti) -->
       <arch-list>12.0</arch-list>
       <!-- Audio analysis model (Kimi-Audio-7B) — loaded in separate venv -->

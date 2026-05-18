@@ -1,19 +1,20 @@
 [Unit]
-Description=Fedora First-Boot Provisioning (one-shot)
+Description=Fedora First-Boot Provisioning
 Documentation=https://github.com/user/fedora-install
 After=network-online.target
 Wants=network-online.target
-# Ensure this runs only on first boot; marker file disables it on subsequent boots
+# Runs only once; marker disables it on subsequent boots
 ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
 
 [Service]
-Type=oneshot
+# Type=simple: service is "active" as soon as the process starts.
+# This allows graphical.target/GDM to proceed while provisioning runs in background.
+Type=simple
 ExecStart=/usr/local/sbin/fedora-first-boot.sh
 EnvironmentFile=-/etc/fedora-provision.env
 StandardOutput=journal+console
 StandardError=journal+console
 TimeoutStartSec=3600
-RemainAfterExit=yes
 
 # Prevent privilege escalation
 NoNewPrivileges=yes
