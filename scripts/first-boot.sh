@@ -175,8 +175,8 @@ else
     log "FEDORA_KERNEL_SOURCE=fedora — CachyOS-Kernel übersprungen."
 fi
 
-# ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+# ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / full) ──────────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only|full)$ ]]; then
     step "Podman + NVIDIA Container Toolkit"
 
     dnf install -y podman podman-compose 2>/dev/null \
@@ -395,6 +395,35 @@ if ! command -v tuned-adm &>/dev/null; then
 fi
 
 if command -v tuned-adm &>/dev/null; then
+    cat > /usr/local/bin/fedora-cpu-profile <<'CPUWRAPEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-podman}"
+
+case "$mode" in
+    podman)
+        # Bestehendes Podman/vLLM-Verhalten: throughput + schedutil
+        /usr/sbin/tuned-adm profile throughput-performance >/dev/null 2>&1 || true
+        for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo schedutil > "$f" 2>/dev/null || true
+        done
+        ;;
+    bitwig)
+        # Audio-optimiertes Profil fuer DAW/Recording
+        /usr/sbin/tuned-adm profile latency-performance >/dev/null 2>&1 || true
+        ;;
+    balanced)
+        /usr/sbin/tuned-adm profile balanced >/dev/null 2>&1 || true
+        ;;
+    *)
+        echo "Usage: $0 {podman|bitwig|balanced}" >&2
+        exit 2
+        ;;
+esac
+CPUWRAPEOF
+    chmod 0755 /usr/local/bin/fedora-cpu-profile
+
     # tuned: throughput-performance für Disk/IRQ/Netzwerk
     # CPU-Governor wird danach von cpu-schedutil.service auf schedutil gesetzt
     # (scx_bpfland arbeitet mit schedutil, nicht performance)
@@ -407,8 +436,8 @@ Requires=tuned.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/tuned-adm profile throughput-performance
-ExecStop=/usr/sbin/tuned-adm profile balanced
+ExecStart=/usr/local/bin/fedora-cpu-profile podman
+ExecStop=/usr/local/bin/fedora-cpu-profile balanced
 
 [Install]
 WantedBy=multi-user.target
@@ -436,12 +465,9 @@ SUTILEOF
     systemctl enable cpu-performance.service 2>/dev/null || true
     systemctl enable cpu-schedutil.service   2>/dev/null || true
     systemctl start  tuned.service           2>/dev/null || true
-    tuned-adm profile throughput-performance 2>/dev/null \
+    /usr/local/bin/fedora-cpu-profile podman 2>/dev/null \
         && log "tuned: throughput-performance aktiv (Disk/IRQ/Net)." \
         || warn "tuned-adm fehlgeschlagen (non-fatal)."
-    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-        echo schedutil > "$f" 2>/dev/null || true
-    done
     log "CPU Governor: schedutil (kompatibel mit scx_bpfland)."
 fi
 
@@ -670,6 +696,12 @@ step "First-Login Setup"
 TARGET_USER="${FEDORA_TARGET_USER:-sija}"
 USER_HOME="/home/${TARGET_USER}"
 REPO_DIR="/usr/local/share/fedora-autoinstall"
+if id -u "$TARGET_USER" >/dev/null 2>&1; then
+    TARGET_USER_EXISTS=1
+else
+    TARGET_USER_EXISTS=0
+    warn "Target user '${TARGET_USER}' existiert nicht — user-spezifische First-Login Schritte werden ubersprungen."
+fi
 
 # first-login.sh ins System installieren
 if [[ -f "${REPO_DIR}/scripts/first-login.sh" ]]; then
@@ -695,7 +727,7 @@ fi
 # Autostart-Desktop-Datei für den Ziel-User einrichten
 AUTOSTART_DIR="${USER_HOME}/.config/autostart"
 MARKER="${USER_HOME}/.local/share/fedora-provision/first-login.done"
-if [[ ! -f "$MARKER" ]] && [[ -x /usr/local/sbin/fedora-first-login.sh ]]; then
+if [[ "$TARGET_USER_EXISTS" -eq 1 ]] && [[ ! -f "$MARKER" ]] && [[ -x /usr/local/sbin/fedora-first-login.sh ]]; then
     mkdir -p "$AUTOSTART_DIR"
     cat > "${AUTOSTART_DIR}/fedora-first-login.desktop" <<'DEOF'
 [Desktop Entry]
@@ -709,6 +741,8 @@ X-GNOME-Autostart-enabled=true
 DEOF
     chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
     log "Autostart-Eintrag gesetzt: ${AUTOSTART_DIR}/fedora-first-login.desktop"
+elif [[ "$TARGET_USER_EXISTS" -eq 0 ]]; then
+    warn "Autostart-Eintrag ubersprungen (User fehlt): ${TARGET_USER}"
 fi
 
 # Sudoers-Regel: sija darf GNOME Extension RPMs ohne Passwort installieren

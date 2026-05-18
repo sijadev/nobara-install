@@ -8,15 +8,23 @@
 # Nutzung:
 #   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
 #   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
+#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile full
 #
 # Optionen:
-#   --profile   theme-bash | headless-vllm | cachyos-kernel  (erforderlich)
+#   --profile   full | theme-bash | headless-vllm | cachyos-kernel  (erforderlich)
 #   --user      Ziel-Benutzer (Standard: $SUDO_USER)
 #   --run-now   first-boot sofort starten statt nur einrichten
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    RESOLVED_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || true)"
+    if [[ -n "$RESOLVED_PATH" ]]; then
+        SCRIPT_PATH="$RESOLVED_PATH"
+    fi
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # ── Farben ────────────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -31,9 +39,27 @@ warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 die()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
+systemd_available() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    [[ -d /run/systemd/system ]] || return 1
+    systemctl show-environment >/dev/null 2>&1 || return 1
+}
+
+systemctl_safe() {
+    if systemd_available; then
+        systemctl "$@"
+    else
+        warn "systemctl $* uebersprungen (kein systemd als PID 1)."
+        return 0
+    fi
+}
+
 # ── Argument-Parsing ──────────────────────────────────────────────────────────
 PROFILE=""
-TARGET_USER="${SUDO_USER:-${USER}}"
+TARGET_USER="${SUDO_USER:-${USER:-}}"
+if [[ -z "$TARGET_USER" ]]; then
+    TARGET_USER="$(logname 2>/dev/null || id -un 2>/dev/null || echo root)"
+fi
 RUN_NOW=0
 
 while [[ $# -gt 0 ]]; do
@@ -48,16 +74,36 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: theme-bash | headless-vllm | cachyos-kernel"
+[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: full | theme-bash | headless-vllm | cachyos-kernel"
 [[ "$EUID" -ne 0 ]] && die "Bitte als root ausführen: sudo bash $0 --profile $PROFILE"
 id "$TARGET_USER" &>/dev/null || die "Benutzer nicht gefunden: $TARGET_USER"
 
 USER_HOME="/home/${TARGET_USER}"
+USER_ENV_DIR="${USER_HOME}/.config/fedora-provision"
+USER_ENV_FILE="${USER_ENV_DIR}/env"
+SYSTEM_ENV_FILE="/etc/fedora-provision.env"
 
 # ── Profil → Umgebungsvariablen ───────────────────────────────────────────────
 step "Profil: ${PROFILE}  Benutzer: ${TARGET_USER}"
 
 case "$PROFILE" in
+    full)
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="full"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_OMB_THEME="modern"
+FEDORA_WS_GTK_ARGS="-c Dark"
+FEDORA_WS_ICON_ARGS=""
+FEDORA_WS_WALL_ARGS=""
+FEDORA_CUDA_SOURCE="nvidia"
+FEDORA_KERNEL_SOURCE="cachyos"
+FEDORA_NVIDIA_OPEN_ONLY="0"
+FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
+FEDORA_AGENT_MODEL="Qwen/Qwen3-8B"
+FEDORA_VLLM_ROUTER_PORT="8000"
+FEDORA_VLLM_REGISTRY="\$HOME/.config/vllm-router/models.json"
+ENVEOF
+        ;;
     theme-bash)
         cat > /etc/fedora-provision.env <<ENVEOF
 FEDORA_INSTALL_PROFILE="theme-bash"
@@ -104,18 +150,38 @@ FEDORA_NVIDIA_OPEN_ONLY="1"
 ENVEOF
     ;;
     *)
-    die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: theme-bash | headless-vllm | cachyos-kernel"
+    die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: full | theme-bash | headless-vllm | cachyos-kernel"
         ;;
 esac
 
-chmod 0644 /etc/fedora-provision.env
-log "/etc/fedora-provision.env geschrieben"
+install -d -m 0755 "$USER_ENV_DIR"
+cp "$SYSTEM_ENV_FILE" "$USER_ENV_FILE"
+chmod 0644 "$SYSTEM_ENV_FILE" "$USER_ENV_FILE"
+chown -R "${TARGET_USER}:${TARGET_USER}" "$USER_ENV_DIR" 2>/dev/null || true
+log "${SYSTEM_ENV_FILE} geschrieben"
+log "${USER_ENV_FILE} geschrieben"
 
-# ── Scripts vom USB installieren ──────────────────────────────────────────────
+# ── Scripts installieren (RPM/USB/Repo robust) ───────────────────────────────
 step "Scripts installieren"
 
-SCRIPTS_SRC="${SCRIPT_DIR}/scripts"
-SYSTEMD_SRC="${SCRIPT_DIR}/systemd"
+SCRIPTS_SRC=""
+SYSTEMD_SRC=""
+
+for base in \
+    "$SCRIPT_DIR" \
+    "/usr/local/share/fedora-autoinstall" \
+    "/usr/local/share/fedora-autoinstall/scripts/.." \
+    "$PWD"; do
+    [[ -f "$base/scripts/first-boot.sh" ]] && SCRIPTS_SRC="$base/scripts"
+    [[ -f "$base/systemd/fedora-first-boot.service" ]] && SYSTEMD_SRC="$base/systemd"
+done
+
+if [[ -z "$SCRIPTS_SRC" ]]; then
+    warn "Konnte Scripts-Quelle nicht automatisch finden (erwartet: */scripts/first-boot.sh)."
+fi
+if [[ -z "$SYSTEMD_SRC" ]]; then
+    warn "Konnte Systemd-Quelle nicht automatisch finden (erwartet: */systemd/fedora-first-boot.service)."
+fi
 
 install_file() {
     local src="$1" dest="$2" mode="$3"
@@ -161,8 +227,8 @@ fi
 # Marker zurücksetzen damit first-boot für dieses Profil erneut läuft
 rm -f /var/lib/fedora-provision/first-boot.done
 
-systemctl daemon-reload
-systemctl enable fedora-first-boot.service
+systemctl_safe daemon-reload
+systemctl_safe enable fedora-first-boot.service
 log "fedora-first-boot.service aktiviert"
 
 # ── First-Login: GUI vs. Headless ─────────────────────────────────────────────
@@ -171,7 +237,7 @@ step "First-Login einrichten"
 # Alten first-login-Marker zurücksetzen
 rm -f "${USER_HOME}/.local/share/fedora-provision/first-login.done"
 
-if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
+if [[ "$PROFILE" =~ ^(theme-bash|full)$ ]]; then
     # GUI-Profile: GNOME-Autostart
     AUTOSTART_DIR="${USER_HOME}/.config/autostart"
     mkdir -p "$AUTOSTART_DIR"
@@ -203,7 +269,8 @@ RemainAfterExit=yes
 User=${TARGET_USER}
 Group=${TARGET_USER}
 Environment=HOME=${USER_HOME}
-EnvironmentFile=-/etc/fedora-provision.env
+EnvironmentFile=-${USER_ENV_FILE}
+EnvironmentFile=-${SYSTEM_ENV_FILE}
 ExecStart=/usr/local/bin/fedora-first-login.sh
 StandardOutput=journal
 StandardError=journal
@@ -212,12 +279,12 @@ TimeoutStartSec=7200
 [Install]
 WantedBy=multi-user.target
 USRUNITEOF
-    systemctl enable fedora-provision-user.service
+    systemctl_safe enable fedora-provision-user.service
     log "fedora-provision-user.service aktiviert"
 fi
 
 # ── Flatpak Flathub (GUI-Profile) ─────────────────────────────────────────────
-if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
+if [[ "$PROFILE" =~ ^(theme-bash|full)$ ]]; then
     flatpak remote-add --if-not-exists flathub \
         https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 fi
@@ -225,7 +292,7 @@ fi
 # ── Sofort starten (optional) ─────────────────────────────────────────────────
 if [[ "$RUN_NOW" == "1" ]]; then
     step "First-Boot sofort starten"
-    systemctl start fedora-first-boot.service
+    systemctl_safe start fedora-first-boot.service
     log "first-boot gestartet — Logs: journalctl -fu fedora-first-boot.service"
 else
     echo ""

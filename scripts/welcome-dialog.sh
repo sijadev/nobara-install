@@ -25,8 +25,9 @@ CHOICE=$(zenity --list \
     --text="<b>Welches Profil möchten Sie einrichten?</b>\n\n<small>Die Auswahl startet sofort die Provisionierung in einem Terminal.\nSie können diesen Dialog jederzeit über das App-Menü erneut öffnen.</small>" \
     --radiolist \
     --column="" --column="Profil" --column="Beschreibung" \
-    TRUE  "theme-bash"     "WhiteSur Theme + Oh-My-Bash + GNOME Tweaks" \
-    FALSE "headless-vllm"  "Podman + vLLM (Kimi-Audio + Qwen3, NVIDIA)" \
+    TRUE  "full"           "Empfohlen: Theme-Bash + Bitwig (Flatpak mit Audio-Launcher) + Headless-vLLM auf dem Host" \
+    FALSE "theme-bash"     "Nur Host: WhiteSur Theme + Oh-My-Bash + Bitwig (Flatpak mit Audio-Launcher)" \
+    FALSE "headless-vllm"  "Nur Headless: Podman + vLLM (Kimi-Audio + Qwen3, NVIDIA)" \
     FALSE "cachyos-kernel" "Nur CachyOS-Kernel installieren (ohne NVIDIA/CUDA)" \
     FALSE "skip"           "Später entscheiden — nichts ausführen" \
     2>/dev/null || true)

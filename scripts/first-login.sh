@@ -24,6 +24,7 @@ MARKER_DIR="${HOME}/.local/share/fedora-provision"
 MARKER_FILE="${MARKER_DIR}/first-login.done"
 LOG_FILE="${MARKER_DIR}/first-login.log"
 ENV_FILE="/etc/fedora-provision.env"
+USER_ENV_FILE="${HOME}/.config/fedora-provision/env"
 
 mkdir -p "$MARKER_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -51,7 +52,11 @@ if [[ -f "$MARKER_FILE" ]]; then
 fi
 
 # ── Load provisioning env ─────────────────────────────────────────────────────
-[[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
+if [[ -f "$USER_ENV_FILE" ]]; then
+    source "$USER_ENV_FILE"
+elif [[ -f "$ENV_FILE" ]]; then
+    source "$ENV_FILE"
+fi
 
 INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
@@ -89,6 +94,66 @@ else
     flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
         && log "Extension Manager (user) installiert." \
         || warn "Extension Manager install fehlgeschlagen (non-fatal)."
+
+    if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
+        flatpak install --user --noninteractive flathub com.bitwig.BitwigStudio \
+            && log "Bitwig Studio (Flatpak) installiert." \
+            || warn "Bitwig Studio install fehlgeschlagen (non-fatal)."
+
+        mkdir -p "${HOME}/.local/bin" "${HOME}/.local/share/applications"
+
+        cat > "${HOME}/.local/bin/bitwig-studio" <<'BITWIGWRAPEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CPU_PROFILE_SWITCH="/usr/local/bin/fedora-cpu-profile"
+USER_ENV_FILE="${HOME}/.config/fedora-provision/env"
+SYSTEM_ENV_FILE="/etc/fedora-provision.env"
+
+if [[ -f "$USER_ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$USER_ENV_FILE"
+elif [[ -f "$SYSTEM_ENV_FILE" ]]; then
+    # shellcheck disable=SC1091
+    source "$SYSTEM_ENV_FILE"
+fi
+
+RESTORE_MODE="balanced"
+if [[ "${FEDORA_INSTALL_PROFILE:-}" =~ ^(headless-vllm|vllm-only|full)$ ]]; then
+    RESTORE_MODE="podman"
+fi
+
+if [[ -x "$CPU_PROFILE_SWITCH" ]] && sudo -n true 2>/dev/null; then
+    sudo -n "$CPU_PROFILE_SWITCH" bitwig || true
+fi
+
+set +e
+flatpak run com.bitwig.BitwigStudio "$@"
+rc=$?
+set -e
+
+if [[ -x "$CPU_PROFILE_SWITCH" ]] && sudo -n true 2>/dev/null; then
+    sudo -n "$CPU_PROFILE_SWITCH" "$RESTORE_MODE" || true
+fi
+
+exit "$rc"
+BITWIGWRAPEOF
+        chmod 0755 "${HOME}/.local/bin/bitwig-studio"
+
+        cat > "${HOME}/.local/share/applications/fedora-bitwig-audio.desktop" <<'BITWIGDESKEOF'
+[Desktop Entry]
+Type=Application
+Name=Bitwig Studio (Audio Profile)
+Comment=Startet Bitwig und schaltet dabei auf das Audio CPU-Profil
+Exec=/home/%u/.local/bin/bitwig-studio
+Icon=com.bitwig.BitwigStudio
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupNotify=true
+BITWIGDESKEOF
+        sed -i "s|/home/%u|${HOME}|g" "${HOME}/.local/share/applications/fedora-bitwig-audio.desktop"
+        log "Bitwig Audio-Launcher erstellt: ~/.local/bin/bitwig-studio"
+    fi
 fi
 
 # ── 2. GNOME extensions aktivieren (RPMs wurden in first-boot installiert) ───
@@ -159,6 +224,22 @@ fi
 step "WhiteSur themes"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
+else
+
+if ! command -v git &>/dev/null; then
+    if have_passwordless_sudo; then
+        if sudo -n dnf install -y git >/dev/null 2>&1; then
+            log "git wurde für WhiteSur nachinstalliert."
+        else
+            warn "git konnte nicht automatisch installiert werden. WhiteSur wird übersprungen."
+        fi
+    else
+        warn "git nicht gefunden und kein passwordless sudo verfügbar. WhiteSur wird übersprungen."
+    fi
+fi
+
+if ! command -v git &>/dev/null; then
+    warn "WhiteSur themes übersprungen (git fehlt)."
 else
 
 WHITESUR_ERRORS=()
@@ -298,6 +379,8 @@ fi
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
 log "Theme-Repos gecacht: $THEMES_DIR (git pull bei nächstem Aufruf)"
 
+fi  # end: git available for WhiteSur
+
 fi  # end: WhiteSur themes headless guard
 
 # ── 6. Oh My Bash ─────────────────────────────────────────────────────────────
@@ -307,10 +390,16 @@ OMB_DIR="${HOME}/.oh-my-bash"
 if [[ -d "$OMB_DIR" ]]; then
     log "Oh My Bash already installed."
 else
-    log "Installing Oh My Bash (unattended)..."
-    bash <(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh) \
-        --unattended \
-        || warn "Oh My Bash install script failed (non-fatal)."
+    if ! command -v curl &>/dev/null; then
+        warn "curl nicht gefunden — Oh My Bash wird übersprungen."
+    elif ! command -v git &>/dev/null; then
+        warn "git nicht gefunden — Oh My Bash wird übersprungen."
+    else
+        log "Installing Oh My Bash (unattended)..."
+        bash <(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh) \
+            --unattended \
+            || warn "Oh My Bash install script failed (non-fatal)."
+    fi
 fi
 
 # Set / correct theme in ~/.bashrc
@@ -326,18 +415,18 @@ if [[ -f "${HOME}/.bashrc" ]]; then
     source "${HOME}/.bashrc" 2>/dev/null || true
 fi
 
-# ── Profile: theme-bash stops after Oh-My-Bash ───────────────────────────────
+# ── Profile: theme-bash stop after Oh-My-Bash ────────────────────────────────
 if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
-    step "theme-bash profile — skipping AI/vLLM provisioning"
-    log "Steps 7-12 skipped (no GPU compute required for theme-bash)."
+    step "${INSTALL_PROFILE} profile — skipping host AI/vLLM provisioning"
+    log "Steps 7-12 skipped on host; vLLM stack is provisioned via Podman path."
     touch "$MARKER_FILE"
     rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
     log "First-login provisioning complete (theme-bash). Log: $LOG_FILE"
     exit 0
 fi
 
-# ── 7. CUDA Toolchain (headless-vllm) ──────────────────────────────────────
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+# ── 7. CUDA Toolchain (headless-vllm / full) ───────────────────────────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only|full)$ ]]; then
     step "CUDA Toolchain"
     
     if command -v nvcc &>/dev/null; then
@@ -368,8 +457,8 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
     fi
 fi
 
-# ── Profile: headless-vllm / vllm-only — Multi-Model Router aktivieren ───────
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+# ── Profile: headless-vllm / vllm-only / full — Multi-Model Router aktivieren ───────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only|full)$ ]]; then
     step "vLLM Multi-Model Router"
 
     QUADLET_TPL="${HOME}/.config/containers/systemd/vllm@.container"

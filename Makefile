@@ -11,7 +11,7 @@ else
 	VENV_PIP := $(VENV_DIR)/bin/pip
 endif
 
-.PHONY: help check-os-prereqs venv install install-dev test run-all run-all-verbose run-all-full run-all-e2e run-all-full-e2e install-usb install-podman e2e test-full-e2e clean
+.PHONY: help check-os-prereqs venv install install-dev test run-all run-all-verbose run-all-full run-all-e2e run-all-full-e2e install-usb install-podman install-podman-debug install-fedora-podman e2e test-full-e2e clean
 
 help:
 	@echo "Targets:"
@@ -26,7 +26,9 @@ help:
 	@echo "  make run-all-e2e - tests/run-all.sh --e2e"
 	@echo "  make run-all-full-e2e - tests/run-all.sh --full --e2e"
 	@echo "  make install-usb DEVICE=/dev/sdX - Echte USB-Installation starten"
+	@echo "  make install-fedora-podman - Fedora-Installation in Podman starten"
 	@echo "  make install-podman - Installation in Podman mit virtuellem USB"
+	@echo "  make install-podman-debug - Podman-Install, Container bei Fehler behalten"
 	@echo "  make e2e         - Alias fur install-podman"
 	@echo "  make test-full-e2e - Voller Testlauf inkl. Podman E2E"
 	@echo "  make clean       - venv entfernen"
@@ -127,6 +129,11 @@ install-usb:
 
 install-podman:
 	@python3 tests/test_podman_e2e_usb.py --run
+
+install-podman-debug:
+	@python3 tests/test_podman_e2e_usb.py --run --keep-on-fail
+
+install-fedora-podman: install-podman
 
 e2e: install-podman
 
