@@ -28,6 +28,19 @@ warn() { echo -e "${YELLOW}[install]${RESET} $*" >&2; }
 die()  { echo -e "${RED}[install] FEHLER: $*${RESET}" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
+validate_iso_file() {
+    local iso_path="$1"
+    local min_size=$((300 * 1024 * 1024))
+    local iso_size
+
+    [[ -f "$iso_path" ]] || return 1
+    iso_size=$(wc -c < "$iso_path" 2>/dev/null || echo 0)
+    (( iso_size >= min_size )) || return 1
+
+    # Ensure the expected boot payload exists in the ISO.
+    bsdtar -tf "$iso_path" images/pxeboot/vmlinuz images/pxeboot/initrd.img >/dev/null 2>&1
+}
+
 # ── Args ──────────────────────────────────────────────────────────────────────
 USB_DEV=""
 CUSTOM_ISO=""
@@ -98,7 +111,7 @@ fi
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen prüfen"
 missing=()
-for cmd in cpio file curl python3; do
+for cmd in cpio file curl python3 bsdtar; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -118,17 +131,29 @@ mkdir -p "$ISO_DIR"
 
 if [[ -n "$CUSTOM_ISO" ]]; then
     [[ -f "$CUSTOM_ISO" ]] || die "ISO nicht gefunden: $CUSTOM_ISO"
+    validate_iso_file "$CUSTOM_ISO" || die "ISO ist ungültig/beschädigt: $CUSTOM_ISO"
     log "Verwende angegebene ISO: $CUSTOM_ISO"
 else
     existing=$(ls -t "${ISO_DIR}"/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
     if [[ -n "$existing" ]]; then
-        log "ISO vorhanden: $(basename "$existing")"
-    else
+        if validate_iso_file "$existing"; then
+            log "ISO vorhanden: $(basename "$existing")"
+        else
+            warn "Gefundene ISO ist ungültig/beschädigt und wird neu geladen: $(basename "$existing")"
+            rm -f "$existing"
+            existing=""
+        fi
+    fi
+    if [[ -z "$existing" ]]; then
         log "Lade Fedora ${FEDORA_VERSION} netinstall-ISO herunter..."
         curl -L --progress-bar \
             -o "${ISO_DIR}/Fedora-Everything-netinst-x86_64-${FEDORA_VERSION}-1.6.iso" \
             "$FEDORA_ISO_URL" || die "ISO-Download fehlgeschlagen."
+        validate_iso_file "${ISO_DIR}/Fedora-Everything-netinst-x86_64-${FEDORA_VERSION}-1.6.iso" \
+            || die "Geladene ISO ist ungültig/beschädigt. Bitte Download/Netz prüfen."
         log "ISO heruntergeladen."
+    else
+        :
     fi
 fi
 

@@ -147,14 +147,34 @@ def generate_kickstart(
     gnome_extensions = [el.text.strip() for el in ext_els if el.text]
 
     # vLLM-Router config
-    vllm_router_el   = root.find("first-login/vllm-router")
+    # --- Lokales RPM-Repo immer einbinden (beide Pfade) ---
+    repo_section = (
+        "# ── Lokales RPM-Repo auf USB ─────────────────────────────────────────────\n"
+        "repo --name=fedora-autoinstall --baseurl=file:///run/install/repo/rpm\n"
+        "repo --name=fedora-autoinstall --baseurl=file:///mnt/stage2/rpm\n"
+    )
+    
+
+    ks = []
+    ks.append(repo_section)
+
+
+    agent_model      = _get(root, "first-login/vllm-router/agent-model", "Qwen/Qwen3-14B-AWQ")
+    audio_model      = _get(root, "first-login/vllm-router/audio-model", "moonshotai/Kimi-Audio-7B-Instruct")
+
+
+    # vLLM router config
+    vllm_router_el = root.find("first-login/vllm-router")
+    # Port: attribute or default
     vllm_router_port = _attr(vllm_router_el, "port", "8000")
-    vllm_registry    = _get(root, "first-login/vllm-router/registry",
-                            "~/.config/vllm-router/models.json")
-    agent_model      = _get(root, "first-login/vllm-router/agent-model",
-                            "Qwen/Qwen3-14B-AWQ")
-    audio_model      = _get(root, "first-login/vllm-router/audio-model",
-                            "moonshotai/Kimi-Audio-7B-Instruct")
+    # Registry: prefer <registry> child, then attribute, then default
+    vllm_registry = "~/.config/vllm-router/models.json"
+    if vllm_router_el is not None:
+        registry_child = vllm_router_el.find("registry")
+        if registry_child is not None and registry_child.text and registry_child.text.strip():
+            vllm_registry = registry_child.text.strip()
+        elif vllm_router_el.get("registry"):
+            vllm_registry = vllm_router_el.get("registry")
 
     pytorch_el     = root.find("first-login/pytorch-venv")
     pytorch_venv   = _attr(pytorch_el, "path", "~/.venvs/ai")

@@ -34,6 +34,36 @@ find_tool() {
     return 1
 }
 
+detect_kernel_version() {
+    local kernel_path="$1"
+    local kver=""
+
+    # Preferred: parse embedded "Linux version ..." string from the binary.
+    kver=$(strings "$kernel_path" 2>/dev/null | sed -nE 's/.*Linux version ([^ ]+).*/\1/p' | head -1 || true)
+
+    # Fallback: parse generic "version ..." marker from file(1) output.
+    if [[ -z "$kver" ]]; then
+        kver=$(file "$kernel_path" 2>/dev/null | sed -nE 's/.*version[[:space:]]+([^ ,;]+).*/\1/p' | head -1 || true)
+    fi
+
+    [[ -n "$kver" ]] || kver="unbekannt"
+    printf '%s\n' "$kver"
+}
+
+validate_extracted_boot_artifacts() {
+    local vmlinuz_path="$1"
+    local initrd_path="$2"
+    local vmlinuz_size initrd_size
+
+    [[ -f "$vmlinuz_path" && -f "$initrd_path" ]] || return 1
+    vmlinuz_size=$(wc -c < "$vmlinuz_path" 2>/dev/null || echo 0)
+    initrd_size=$(wc -c < "$initrd_path" 2>/dev/null || echo 0)
+
+    # Fedora netinst payload should be much larger; tiny files indicate broken ISO.
+    (( vmlinuz_size >= 5 * 1024 * 1024 )) || return 1
+    (( initrd_size >= 20 * 1024 * 1024 )) || return 1
+}
+
 # ── Args ──────────────────────────────────────────────────────────────────────
 USB_DEV="${1:-}"
 KERNEL_RPM="${2:-}"
@@ -167,7 +197,10 @@ build_on_macos() {
     cp "${WORK_DIR}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
     cp "${WORK_DIR}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
 
-    KVER=$(file "${WORK_DIR}/vmlinuz" | grep -oE 'version [^ ]+' | awk '{print $2}' || echo "unbekannt")
+    validate_extracted_boot_artifacts "${WORK_DIR}/vmlinuz" "${WORK_DIR}/initrd.img" \
+        || die "Extrahierte Boot-Dateien sind ungültig (ISO defekt/trunkiert?)."
+
+    KVER=$(detect_kernel_version "${WORK_DIR}/vmlinuz")
     log "Fedora-Installer-Kernel: ${KVER}"
     log "vmlinuz:   $(du -h "${WORK_DIR}/vmlinuz"    | cut -f1)"
     log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
@@ -375,9 +408,12 @@ mount -o loop,ro "$src_iso" "$ISO_MNT"
 cp "${ISO_MNT}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
 cp "${ISO_MNT}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
 
+validate_extracted_boot_artifacts "${WORK_DIR}/vmlinuz" "${WORK_DIR}/initrd.img" \
+    || die "Extrahierte Boot-Dateien sind ungültig (ISO defekt/trunkiert?)."
+
 umount "$ISO_MNT"
 
-KVER=$(file "${WORK_DIR}/vmlinuz" | grep -oP 'version \K\S+' || echo "unbekannt")
+KVER=$(detect_kernel_version "${WORK_DIR}/vmlinuz")
 log "Fedora-Installer-Kernel: ${KVER}"
 log "vmlinuz:   $(du -h "${WORK_DIR}/vmlinuz"    | cut -f1)"
 log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
