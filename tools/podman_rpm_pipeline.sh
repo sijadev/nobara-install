@@ -73,7 +73,7 @@ smoke_test_vllm_podman_stack() {
     local build_dir
     build_dir="$(mktemp -d /tmp/fedora-vllm-smoke.XXXXXX)"
     cat > "${build_dir}/Containerfile" <<'DOCKERFILE'
-FROM fedora:latest
+FROM fedora:43
 COPY vllm-smoke.sh /usr/local/bin/vllm-smoke.sh
 CMD ["/bin/bash", "/usr/local/bin/vllm-smoke.sh"]
 DOCKERFILE

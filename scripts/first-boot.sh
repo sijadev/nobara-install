@@ -284,9 +284,10 @@ if [[ "$INSTALL_PROFILE" == "nvidia-cuda" ]]; then
     elif is_container; then
         warn "Container-Umgebung erkannt — NVIDIA/CUDA Installation übersprungen."
     else
+        # kernel-devel für den aktuell laufenden Kernel — akmods braucht die Headers
+        # um das Modul noch während first-boot zu bauen (vor dem ersten CachyOS-Boot).
         run_dnf_retry dnf install -y \
-            kernel-cachyos \
-            kernel-cachyos-devel \
+            "kernel-devel-$(uname -r)" \
             akmod-nvidia-open \
             xorg-x11-drv-nvidia-cuda \
             && log "NVIDIA Open Driver + xorg-cuda installiert." \
@@ -305,7 +306,9 @@ MEOF
 
         nvidia_module_ok=0
         if command -v akmods &>/dev/null; then
-            log "Building kernel modules (akmods)..."
+            log "Building kernel modules (akmods) für alle installierten Kernel..."
+            # --force baut für JEDEN Kernel mit verfügbaren Headers:
+            # aktueller Fedora-Kernel (kernel-devel) + CachyOS (kernel-cachyos-devel)
             if akmods --force; then
                 nvidia_module_ok=1
                 log "akmods: NVIDIA-Modul erfolgreich gebaut."

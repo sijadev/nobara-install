@@ -111,7 +111,7 @@ build_with_podman() {
     podman_exec run --rm \
         --platform "${PODMAN_PLATFORM}" \
         -v "${PROJECT_DIR}:/src:Z" \
-        fedora:latest \
+        fedora:43 \
         /bin/bash -lc "
             set -euo pipefail
             dnf -y install rpm-build tar gzip findutils createrepo_c >/dev/null

@@ -81,12 +81,12 @@ def main() -> int:
         if not args.keep_on_fail:
             cmd = (
                 f"sudo podman run --rm --privileged --memory {CONTAINER_MEMORY} --platform {PODMAN_PLATFORM} "
-                f"-v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}"
+                f"-v '{project_dir}:/src:Z' fedora:43 /bin/bash {inner_runner}"
             )
             return run(["podman", "machine", "ssh", cmd])
 
         cmd = (
-            f"sudo podman run --name {debug_name} --privileged --memory {CONTAINER_MEMORY} --platform {PODMAN_PLATFORM} -v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}; "
+            f"sudo podman run --name {debug_name} --privileged --memory {CONTAINER_MEMORY} --platform {PODMAN_PLATFORM} -v '{project_dir}:/src:Z' fedora:43 /bin/bash {inner_runner}; "
             "rc=$?; "
             "if [ $rc -eq 0 ]; then "
             f"  sudo podman rm -f {debug_name} >/dev/null; "
@@ -112,7 +112,7 @@ def main() -> int:
                 PODMAN_PLATFORM,
                 "-v",
                 f"{project_dir}:/src:Z",
-                "fedora:latest",
+                "fedora:43",
                 "/bin/bash",
                 inner_runner,
             ]
@@ -130,7 +130,7 @@ def main() -> int:
             PODMAN_PLATFORM,
             "-v",
             f"{project_dir}:/src:Z",
-            "fedora:latest",
+            "fedora:43",
             "/bin/bash",
             inner_runner,
         ]
