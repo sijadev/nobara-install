@@ -59,6 +59,15 @@ is_headless_profile() {
     [[ "${INSTALL_PROFILE:-full}" =~ ^(headless-vllm|vllm-only)$ ]]
 }
 
+is_container() {
+    # Detect podman/docker/systemd-nspawn container environments.
+    # Kernel install hangs in containers (dracut can't build initramfs).
+    [[ -f /run/.containerenv ]] || \
+    [[ -f /.dockerenv ]] || \
+    systemd-detect-virt --container >/dev/null 2>&1 || \
+    [[ "$(cat /proc/1/comm 2>/dev/null || true)" != "systemd" ]]
+}
+
 ensure_gui_boot_path() {
     local exit_code="${1:-0}"
 
@@ -151,7 +160,9 @@ log "Repo setup complete (RPM Fusion + metadata refresh)."
 # Blackwell-Kompatibilität. Muss VOR akmod-nvidia-open installiert werden,
 # damit Module gegen den richtigen Kernel gebaut werden.
 step "CachyOS Kernel installieren"
-if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
+if is_container; then
+    log "Container-Umgebung erkannt — Kernel-Installation übersprungen (dracut nicht verfügbar)."
+elif [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
     if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
         if run_dnf_retry dnf install -y \
             kernel-cachyos \
@@ -270,6 +281,8 @@ if [[ "$INSTALL_PROFILE" == "nvidia-cuda" ]]; then
 
     if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
         warn "Kein NVIDIA GPU erkannt — NVIDIA/CUDA Installation übersprungen."
+    elif is_container; then
+        warn "Container-Umgebung erkannt — NVIDIA/CUDA Installation übersprungen."
     else
         run_dnf_retry dnf install -y \
             kernel-cachyos \

@@ -91,7 +91,6 @@ fi
 # ── Plan: SRC → DST ───────────────────────────────────────────────────────────
 # Format: "src_rel|dst_rel"
 PLAN=(
-    "__iso__|iso/fedora-netinst.iso"
     "scripts/fedora-provision.sh|fedora-provision.sh"
     "kickstart/common-post.inc|kickstart/common-post.inc"
     "kickstart/fedora-full.ks|kickstart/fedora-full.ks"
@@ -126,11 +125,7 @@ to_remove=()
 
 for entry in "${PLAN[@]}"; do
     IFS='|' read -r src_rel dst_rel <<<"$entry"
-    if [[ "$src_rel" == "__iso__" ]]; then
-        src=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
-    else
-        src="${PROJECT_DIR}/${src_rel}"
-    fi
+    src="${PROJECT_DIR}/${src_rel}"
     dst="${USB_MNT}/${dst_rel}"
     [[ -f "$src" ]] || { warn "Quelle fehlt: ${src_rel} — übersprungen"; continue; }
 
@@ -188,11 +183,7 @@ if [[ ${#to_copy[@]} -gt 0 ]]; then
     fi
     for entry in "${to_copy[@]}"; do
         IFS='|' read -r src_rel dst_rel <<<"$entry"
-        if [[ "$src_rel" == "__iso__" ]]; then
-            src=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
-        else
-            src="${PROJECT_DIR}/${src_rel}"
-        fi
+        src="${PROJECT_DIR}/${src_rel}"
         dst="${USB_MNT}/${dst_rel}"
         mkdir -p "$(dirname "$dst")"
         cp "$src" "$dst"

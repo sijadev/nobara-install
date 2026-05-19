@@ -146,19 +146,6 @@ def generate_kickstart(
     ext_els = root.findall("first-login/gnome-extensions/extension") or []
     gnome_extensions = [el.text.strip() for el in ext_els if el.text]
 
-    # vLLM-Router config
-    # --- Lokales RPM-Repo immer einbinden (beide Pfade) ---
-    repo_section = (
-        "# ── Lokales RPM-Repo auf USB ─────────────────────────────────────────────\n"
-        "repo --name=fedora-autoinstall --baseurl=file:///run/install/repo/rpm\n"
-        "repo --name=fedora-autoinstall --baseurl=file:///mnt/stage2/rpm\n"
-    )
-    
-
-    ks = []
-    ks.append(repo_section)
-
-
     agent_model      = _get(root, "first-login/vllm-router/agent-model", "Qwen/Qwen3-14B-AWQ")
     audio_model      = _get(root, "first-login/vllm-router/audio-model", "moonshotai/Kimi-Audio-7B-Instruct")
 
@@ -304,9 +291,6 @@ DEOF
 
 text
 reboot
-
-# ── Lokales RPM-Repo auf Ventoy-USB ──────────────────────────────────────────
-repo --name=fedora-autoinstall --baseurl=file:///run/install/repo/rpm
 
 {pre_block}
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────

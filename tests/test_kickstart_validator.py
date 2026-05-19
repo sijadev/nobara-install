@@ -36,5 +36,16 @@ class KickstartValidatorTests(unittest.TestCase):
                 self._validate(ks)
 
 
+class KickstartRepoFallbackTests(unittest.TestCase):
+    """Regression-Checks fuer lokale RPM-Repo-Direktive in statischen Profilen."""
+
+    def test_full_profile_has_no_kickstart_repo_directive(self):
+        """Repo ist jetzt via inst.addrepo in grub.cfg — darf nicht mehr im Kickstart stehen."""
+        ks_path = KICKSTART_DIR / "fedora-full.ks"
+        content = ks_path.read_text(encoding="utf-8")
+        self.assertNotIn("repo --name=fedora-autoinstall", content)
+        self.assertNotIn("fedora-autoinstall-stage2", content)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,6 @@ Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohn
 
 | Betriebssystem | Benötigt |
 |---|---|
-| Windows 11 | Python 3 mit `venv` (für lokale Python-Tools/Tests, kein USB-Build) |
 | macOS | Python 3 mit `venv` |
 | Linux | Python 3 mit `venv` |
 
@@ -55,6 +54,7 @@ fedora-autoinstall/
 │   ├── fedora-full.ks         # Vollinstallation (GNOME + NVIDIA)
 │   ├── fedora-theme-bash.ks   # GNOME + WhiteSur
 │   ├── fedora-headless-vllm.ks# Headless-Profil (kein GUI)
+│   ├── fedora-vm.ks           # VM Smoke-Test (minimale Installation)
 │   └── common-post.inc        # Gemeinsamer %post-Block
 │
 ├── lib/
@@ -62,7 +62,9 @@ fedora-autoinstall/
 │   └── xml2ks.py              # XML → Kickstart Konverter + Validator
 │
 ├── rpm/
-│   └── fedora-autoinstall.spec# RPM-Spec für Provisioning-Scripts
+│   ├── fedora-autoinstall.spec# RPM-Spec für Provisioning-Scripts
+│   ├── fedora-autoinstall-*.noarch.rpm  # Gebautes Paket
+│   └── repodata/              # createrepo-Metadaten (lokales DNF-Repo)
 │
 ├── scripts/                   # Wird auf Zielsystem installiert (via RPM)
 │   ├── first-boot.sh          # Systemweite Provisionierung (root, einmalig)
@@ -78,6 +80,12 @@ fedora-autoinstall/
 │
 ├── systemd/
 │   └── fedora-first-boot.service
+│
+├── tests/
+│   ├── run-all.sh             # Test-Runner (Standard + Full + E2E)
+│   ├── test_kickstart_validator.py
+│   ├── test_xml2ks.py
+│   └── test_anaconda_vm_usb.py# VM E2E Smoke-Test (macOS QEMU / Linux libvirt)
 │
 └── iso/
     ├── kernel-cache/          # Bazzite-Kernel-RPM-Cache (kein Re-Download)
@@ -201,12 +209,14 @@ USB einstecken → UEFI Boot → GRUB2-Menü → Hotkey drücken:
 
 | Taste | Profil | Was passiert |
 |-------|--------|-------------|
-| `f` | Vollinstallation | Anaconda → `fedora-full.ks` (GNOME + NVIDIA) |
-| `d` | Debug-Install | Text-Modus + Serial-Log + Logs auf USB |
-| `t` | Theme + Bash | Provisioner auf bestehendem System |
-| `h` | Headless | Provisioner: Podman + NVIDIA, kein GUI |
+| `f` | Vollinstallation | Anaconda → `fedora-full.ks` (GNOME + NVIDIA + vLLM) |
+| `g` | GUI-Vollinstallation | Wie `f`, aber graphischer Modus + Serial-Log |
+| `d` | Debug-Install | Text-Modus + Serial-Log (ttyS0,115200) |
+| `s` | Debug Live Shell | Anaconda-Shell ohne Installation (`inst.rescue`) |
+| `m` | VM-Test | Anaconda → `fedora-vm.ks` (minimale VM-Installation) |
+| `1` | Minimal Args | Ohne NVIDIA/Multipath (Kompatibilitäts-Test) |
 
-Stage2 (Anaconda-Installer) wird aus der lokalen ISO auf dem USB-Stick geladen — die ISO wird beim USB-Build mitkopiert.
+Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO auf dem USB-Stick nötig.
 
 ### 4. Provisioner auf laufendem System
 
@@ -330,14 +340,35 @@ Beim ersten Boot werden automatisch eingerichtet:
 
 ```bash
 # Standard-Testlauf (stabil, inkl. systemd Unit-Tests)
-bash tests/run-all.sh
+make test
 
 # Verbose
-bash tests/run-all.sh -v
+make run-all-verbose
 
 # Voller Lauf (inkl. Python + Kickstart-Validator)
-bash tests/run-all.sh --full
+make run-all-full
 ```
+
+### VM Smoke-Test (macOS / Linux)
+
+Bootet den Fedora-Installer-Kernel direkt in QEMU, liest `fedora-vm.ks` vom USB-Stick
+und prüft ob Anaconda startet — kein GRUB, kein EFI-Binary nötig.
+
+```bash
+# USB-Stick eingesteckt lassen, Gerätepfad angeben:
+make vm-gui DEVICE=/dev/diskN        # macOS
+make vm-gui DEVICE=/dev/sdX          # Linux
+```
+
+Was passiert:
+1. `boot/vmlinuz` + `boot/initrd.img` werden vom gemounteten USB ins Temp-Dir kopiert
+2. USB wird ausgehängt (`diskutil unmountDisk`)
+3. QEMU startet mit `-kernel`/`-initrd` (direkter Kernel-Boot, kein OVMF)
+4. Anaconda bootet mit `fedora-vm.ks` → minimale Installation auf virtuellem Zieldisk
+5. Fenster bleibt offen bis Installation abgeschlossen oder `Ctrl+C`
+
+> **Hinweis macOS/Apple Silicon:** QEMU emuliert x86\_64 via TCG (kein HVF).
+> Der Stage2-Download dauert 10–15 Minuten — das ist normal.
 
 ---
 
@@ -394,11 +425,89 @@ inst.disk=nvme1n1
 
 ---
 
+## XML-Konfiguration
+
+Die Kickstart-Dateien werden **nicht manuell editiert** — immer über `lib/xml2ks.py` aus `config/example.xml` generieren:
+
+```bash
+python3 lib/xml2ks.py --config config/example.xml --output kickstart/fedora-full.ks
+```
+
+### Wichtige XML-Felder
+
+| Element | Beschreibung | Beispiel |
+|---|---|---|
+| `<local-repo>` | `baseurl` für das lokale RPM-Repo auf dem USB-Stick | `file:///run/install/repo/rpm` |
+| `<disk>` | Ziel-Disk (wird automatisch erkannt wenn `<partitioning><scheme>auto</scheme>`) | `/dev/nvme0n1` |
+| `<user/password_hash>` | crypt-Hash (`openssl passwd -6 Passwort`) | `$6$...` |
+| `<first-boot/kernel source="">` | Kernel nach Installation: `cachyos` oder `fedora` | `cachyos` |
+
+### RPM-Repo Pfad (`<local-repo>`)
+
+Anaconda mountet den USB-Stick (Quelle von `inst.ks=hd:LABEL=FEDORA-USB`) unter `/run/install/repo`.
+Das `rpm/`-Verzeichnis auf dem Stick ist damit als `file:///run/install/repo/rpm` erreichbar.
+
+```xml
+<local-repo>file:///run/install/repo/rpm</local-repo>
+```
+
+Das `rpm/`-Verzeichnis muss auf dem Stick vorhanden sein und gültige `repodata/` enthalten:
+
+```bash
+# RPM bauen (auf Fedora):
+rpmbuild -bb --define "_sourcedir ." rpm/fedora-autoinstall.spec
+
+# Repo-Metadaten erzeugen:
+createrepo rpm/
+
+# Auf USB synchronisieren:
+tools/sync-usb.sh
+```
+
+---
+
+## Troubleshooting
+
+### `[!] Softwareauswahl` — Warnung in Anaconda
+
+Das `fedora-autoinstall` Paket kann nicht gefunden werden. Ursache: `rpm/`-Verzeichnis fehlt auf dem USB-Stick oder enthält kein gültiges Repo.
+
+**Fix:**
+```bash
+# Prüfen ob rpm/ auf dem Stick vorhanden ist:
+ls /run/media/$USER/FEDORA-USB/rpm/
+
+# Fehlt es, USB neu synchronisieren:
+tools/sync-usb.sh
+```
+
+### PC schaltet sich während `initqueue` aus
+
+Tritt auf bevor Anaconda startet — dracut enumeriert Hardware. Typische Ursache: PCIe-AER-Interaktion mit NVIDIA Blackwell / neuem AMD Chipsatz.
+
+**Diagnose:** Im GRUB `[e]` drücken, an die `linux`-Zeile anhängen:
+
+```
+pci=nommconf pci=nomsi
+```
+
+Weitere Kandidaten:
+
+| Symptom | Kernel-Arg |
+|---|---|
+| Shutdown exakt nach ~30 s | `rd.retry=60` (USB-Label wird nicht rechtzeitig erkannt) |
+| NVMe-Enumeration triggert Shutdown | `nvme_core.default_ps_max_latency_us=0` |
+| AMD ACPI-Problem | `amd_iommu=off` |
+
+Für detaillierten Log: **`[d]` Debug-Install** booten — Serial-Output landet auf `ttyS0,115200`.
+
+---
+
 ## Hinweise
 
 - **NVIDIA-Treiber:** Wird erst beim ersten Boot via `akmod-nvidia-open` gebaut — nicht während der Installation.
 - **UEFI erforderlich:** Legacy-BIOS/MBR nicht unterstützt.
-- **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` ersetzen.
+- **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` unter `<user/password_hash>` eintragen.
 - **Kernel-Cache:** `iso/kernel-cache/` — Bazzite-RPMs werden gecacht, kein Re-Download bei `build-usb.sh`.
-- **RPM-Repo:** Wird von `install.sh` automatisch gebaut und beim USB-Build nach `rpm/` auf den Stick kopiert.
+- **Kickstart nie manuell editieren** — immer `lib/xml2ks.py` verwenden, sonst gehen Änderungen beim nächsten Generieren verloren.
 

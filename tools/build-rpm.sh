@@ -22,6 +22,15 @@ warn() { echo -e "${YELLOW}[build-rpm]${RESET} $*" >&2; }
 die()  { echo -e "${RED}[build-rpm] $*${RESET}" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
+podman_exec() {
+    # On macOS, podman machine is user-scoped and cannot be managed as root.
+    if [[ "$HOST_OS" == "Darwin" && "${EUID}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+        sudo -u "$SUDO_USER" podman "$@"
+    else
+        podman "$@"
+    fi
+}
+
 [[ -f "$SPEC_FILE" ]] || die "Spec-Datei fehlt: $SPEC_FILE"
 
 NAME="$(awk '/^Name:/ {print $2; exit}' "$SPEC_FILE")"
@@ -49,7 +58,7 @@ create_source_tarball() {
         --exclude 'rpm/repodata' \
         "${PROJECT_DIR}/" "${stage_dir}/"
 
-    tar -C "$stage_root" -czf "$SRC_TARBALL" "$SRC_BASENAME"
+    COPYFILE_DISABLE=1 tar -C "$stage_root" -czf "$SRC_TARBALL" "$SRC_BASENAME"
     rm -rf "$stage_root"
 
     log "Source-Tarball erstellt: ${SRC_TARBALL}"
@@ -91,15 +100,15 @@ build_with_podman() {
     step "RPM via Podman bauen"
     command -v podman >/dev/null 2>&1 || die "Weder rpmbuild noch podman verfugbar."
 
-    if ! podman info >/dev/null 2>&1; then
+    if ! podman_exec info >/dev/null 2>&1; then
         if [[ "$HOST_OS" == "Darwin" ]]; then
             warn "Podman Machine ist nicht aktiv — starte sie."
-            podman machine start >/dev/null
+            podman_exec machine start >/dev/null
         fi
     fi
-    podman info >/dev/null 2>&1 || die "Podman ist nicht bereit."
+    podman_exec info >/dev/null 2>&1 || die "Podman ist nicht bereit."
 
-    podman run --rm \
+    podman_exec run --rm \
         --platform "${PODMAN_PLATFORM}" \
         -v "${PROJECT_DIR}:/src:Z" \
         fedora:latest \

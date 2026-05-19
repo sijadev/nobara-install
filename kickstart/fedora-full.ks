@@ -6,9 +6,6 @@
 text
 reboot
 
-# ── Lokales RPM-Repo auf Ventoy-USB ──────────────────────────────────────────
-repo --name=fedora-autoinstall --baseurl=file:///run/install/repo/rpm
-
 %pre
 #!/bin/bash
 DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)

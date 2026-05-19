@@ -189,18 +189,36 @@ check_grub_install_source() {
         status=1
     fi
 
-    if grep -q "inst.stage2=hd:LABEL=FEDORA-USB:/iso/fedora-netinst.iso" "$grub_cfg"; then
-        echo "[podman-e2e][OK] GRUB zeigt Stage2 auf die lokale ISO"
-    else
-        echo "[podman-e2e][FAIL] GRUB zeigt Stage2 nicht auf die lokale ISO"
-        status=1
-    fi
-
     if grep -q "inst.repo=" "$grub_cfg"; then
         echo "[podman-e2e][OK] GRUB enthaelt inst.repo"
     else
         echo "[podman-e2e][FAIL] GRUB enthaelt kein inst.repo (Informationsquelle fehlt)"
         status=1
+    fi
+
+    if grep -q "inst.addrepo=" "$grub_cfg"; then
+        echo "[podman-e2e][OK] GRUB enthaelt inst.addrepo (lokales RPM-Repo)"
+    else
+        echo "[podman-e2e][FAIL] GRUB enthaelt kein inst.addrepo (lokales RPM-Repo fehlt)"
+        status=1
+    fi
+}
+
+check_kickstart_repo_fallback() {
+    local ks_path="$1"
+
+    if [[ ! -f "$ks_path" ]]; then
+        echo "[podman-e2e][FAIL] Kickstart-Datei fehlt: $ks_path"
+        status=1
+        return
+    fi
+
+    # Repo-Direktive gehoert jetzt in GRUB via inst.addrepo, nicht in den Kickstart.
+    if grep -qF "repo --name=fedora-autoinstall" "$ks_path"; then
+        echo "[podman-e2e][FAIL] Kickstart enthaelt repo-Direktive (sollte in GRUB inst.addrepo stehen)"
+        status=1
+    else
+        echo "[podman-e2e][OK] Kickstart enthaelt keine lokale repo-Direktive (korrekt)"
     fi
 }
 
@@ -236,7 +254,6 @@ if [[ "$mounted" -eq 1 ]]; then
     check_artifact /mnt/fedora-usb/boot/vmlinuz
     check_artifact /mnt/fedora-usb/boot/initrd.img
     check_artifact /mnt/fedora-usb/boot/grub2/grub.cfg
-    check_artifact /mnt/fedora-usb/iso/fedora-netinst.iso
     check_artifact /mnt/fedora-usb/kickstart/fedora-full.ks
     if ls /mnt/fedora-usb/rpm/*.rpm >/dev/null 2>&1; then
         echo "[podman-e2e][OK] RPM-Artefakte vorhanden"
@@ -246,12 +263,23 @@ if [[ "$mounted" -eq 1 ]]; then
     fi
     check_artifact /mnt/fedora-usb/rpm/repodata
     check_grub_install_source /mnt/fedora-usb/boot/grub2/grub.cfg
+    check_kickstart_repo_fallback /mnt/fedora-usb/kickstart/fedora-full.ks
 
     # Wichtige Marker/Logs vom gemounteten USB pruefen.
     scan_log_patterns /mnt/fedora-usb/var/log/fedora-first-boot.log fedora-first-boot.log
     scan_log_patterns /mnt/fedora-usb/var/lib/fedora-provision/first-boot.done first-boot.done
     scan_log_patterns /mnt/fedora-usb/var/log/fedora-provision.log fedora-provision.log
     scan_log_patterns /mnt/fedora-usb/var/lib/fedora-provision/provision.done provision.done
+
+    # Boot-Dateien fuer VM-Test exportieren (solange Partition noch gemountet ist).
+    VM_BOOT_DIR="/src/iso/vm-boot"
+    mkdir -p "$VM_BOOT_DIR"
+    cp /mnt/fedora-usb/boot/vmlinuz   "$VM_BOOT_DIR/vmlinuz"   2>/dev/null \
+        && echo "[podman-e2e][OK] vmlinuz → $VM_BOOT_DIR/" \
+        || echo "[podman-e2e][WARN] vmlinuz-Export fehlgeschlagen"
+    cp /mnt/fedora-usb/boot/initrd.img "$VM_BOOT_DIR/initrd.img" 2>/dev/null \
+        && echo "[podman-e2e][OK] initrd.img → $VM_BOOT_DIR/" \
+        || echo "[podman-e2e][WARN] initrd.img-Export fehlgeschlagen"
 fi
 
 # Installationslog wird immer geprueft, auch bei fruehem Fehler.
@@ -268,6 +296,15 @@ if [[ "$status" -eq 0 ]] && [ -f /src/tools/podman_rpm_pipeline.sh ]; then
     bash /src/tools/podman_rpm_pipeline.sh
 elif [[ "$status" -eq 0 ]]; then
     echo "[WARN] podman_rpm_pipeline.sh nicht gefunden!"
+fi
+
+# Virtuelle USB fuer VM-Test exportieren (nach Pipeline, vor Exit).
+if [[ "$status" -eq 0 && -f "$work/usb.img" ]]; then
+    umount /mnt/fedora-usb 2>/dev/null || true
+    sync
+    dd if="$work/usb.img" of=/src/iso/fedora-usb-latest.img bs=4M conv=sparse status=none 2>/dev/null \
+        && echo "[podman-e2e][OK] USB-Image → /src/iso/fedora-usb-latest.img" \
+        || echo "[podman-e2e][WARN] USB-Image-Export fehlgeschlagen"
 fi
 
 if [[ "$status" -eq 0 ]]; then

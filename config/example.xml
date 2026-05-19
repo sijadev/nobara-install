@@ -11,6 +11,11 @@
 -->
 <fedora-install>
 
+  <!-- ── Lokales RPM-Repo auf USB ───────────────────────────────────────── -->
+  <!-- Anaconda mountet den USB-Stick (inst.ks=hd:LABEL=FEDORA-USB) unter   -->
+  <!-- /run/install/repo — das rpm/ Verzeichnis auf dem Stick liegt dort.   -->
+  <local-repo>file:///run/install/repo/rpm</local-repo>
+
   <!-- ── ISO source ──────────────────────────────────────────────────────── -->
   <iso>
     <url>https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso</url>

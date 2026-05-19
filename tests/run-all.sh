@@ -14,6 +14,8 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 VERBOSE=0
 FULL=0
 E2E=0
+ANACONDA_VM=0
+USB_DEVICE=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -29,8 +31,20 @@ while [[ $# -gt 0 ]]; do
 			E2E=1
 			shift
 			;;
+		--anaconda-vm)
+			ANACONDA_VM=1
+			shift
+			;;
+		--usb-device)
+			USB_DEVICE="${2:-}"
+			if [[ -z "$USB_DEVICE" ]]; then
+				echo "Fehlender Wert fuer --usb-device" >&2
+				exit 2
+			fi
+			shift 2
+			;;
 		-h|--help)
-			echo "Usage: bash tests/run-all.sh [-v|--verbose] [--full] [--e2e]"
+			echo "Usage: bash tests/run-all.sh [-v|--verbose] [--full] [--e2e] [--anaconda-vm --usb-device /dev/sdX]"
 			exit 0
 			;;
 		*)
@@ -74,6 +88,18 @@ if [[ $E2E -eq 1 ]]; then
 	python3 tests/test_podman_e2e_usb.py --run
 else
 	echo "[6/6] Podman E2E: ubersprungen (nutze --e2e)"
+fi
+
+if [[ $ANACONDA_VM -eq 1 ]]; then
+	USB_DEVICE_EFFECTIVE="${USB_DEVICE:-${FEDORA_VM_USB_DEVICE:-}}"
+	if [[ -z "$USB_DEVICE_EFFECTIVE" ]]; then
+		echo "[7/7] Anaconda VM USB: FEHLER (nutze --usb-device /dev/sdX oder FEDORA_VM_USB_DEVICE)" >&2
+		exit 2
+	fi
+	echo "[7/7] Anaconda VM USB: Full-Install Smoke"
+	python3 tests/test_anaconda_vm_usb.py --run --usb-device "$USB_DEVICE_EFFECTIVE"
+else
+	echo "[7/7] Anaconda VM USB: ubersprungen (nutze --anaconda-vm)"
 fi
 
 echo ""

@@ -16,10 +16,37 @@ from pathlib import Path
 
 
 PODMAN_PLATFORM = "linux/amd64"
+# GNOME + scx_bpfland + all pipeline deps need ~6 GB RAM in the container.
+CONTAINER_MEMORY = "8g"
+# Minimum RAM the Podman machine VM must have (macOS only).
+MACOS_MIN_MACHINE_MEMORY_MB = 6144
 
 
 def run(cmd: list[str]) -> int:
     return subprocess.run(cmd, check=False).returncode
+
+
+def macos_check_machine_memory() -> None:
+    """Warn if the Podman machine has less than MACOS_MIN_MACHINE_MEMORY_MB RAM."""
+    try:
+        result = subprocess.run(
+            ["podman", "machine", "inspect", "--format", "{{.Resources.Memory}}"],
+            check=False, text=True, capture_output=True,
+        )
+        mem_bytes = int((result.stdout or "0").strip())
+        mem_mb = mem_bytes // (1024 * 1024)
+        if mem_mb < MACOS_MIN_MACHINE_MEMORY_MB:
+            print(
+                f"[podman-e2e][WARN] Podman-Machine hat nur {mem_mb} MB RAM "
+                f"(empfohlen: >={MACOS_MIN_MACHINE_MEMORY_MB} MB).\n"
+                f"[podman-e2e][WARN] Einmalig erhoehen:\n"
+                f"[podman-e2e][WARN]   podman machine stop\n"
+                f"[podman-e2e][WARN]   podman machine set --memory {MACOS_MIN_MACHINE_MEMORY_MB}\n"
+                f"[podman-e2e][WARN]   podman machine start\n"
+                f"[podman-e2e][WARN] Oder: make podman-machine-setup"
+            )
+    except Exception:
+        pass
 
 
 def main() -> int:
@@ -49,16 +76,17 @@ def main() -> int:
 
     if platform.system() == "Darwin":
         _ = run(["podman", "machine", "start"])
+        macos_check_machine_memory()
         print("[podman-e2e] starte E2E via podman machine (rootful container)...")
         if not args.keep_on_fail:
             cmd = (
-                f"sudo podman run --rm --privileged --platform {PODMAN_PLATFORM} "
+                f"sudo podman run --rm --privileged --memory {CONTAINER_MEMORY} --platform {PODMAN_PLATFORM} "
                 f"-v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}"
             )
             return run(["podman", "machine", "ssh", cmd])
 
         cmd = (
-            f"sudo podman run --name {debug_name} --privileged --platform {PODMAN_PLATFORM} -v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}; "
+            f"sudo podman run --name {debug_name} --privileged --memory {CONTAINER_MEMORY} --platform {PODMAN_PLATFORM} -v '{project_dir}:/src:Z' fedora:latest /bin/bash {inner_runner}; "
             "rc=$?; "
             "if [ $rc -eq 0 ]; then "
             f"  sudo podman rm -f {debug_name} >/dev/null; "
@@ -79,6 +107,7 @@ def main() -> int:
                 "run",
                 "--rm",
                 "--privileged",
+                "--memory", CONTAINER_MEMORY,
                 "--platform",
                 PODMAN_PLATFORM,
                 "-v",
@@ -96,6 +125,7 @@ def main() -> int:
             "--name",
             debug_name,
             "--privileged",
+            "--memory", CONTAINER_MEMORY,
             "--platform",
             PODMAN_PLATFORM,
             "-v",

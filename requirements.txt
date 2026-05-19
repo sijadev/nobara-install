@@ -1,5 +1,5 @@
 # Runtime Python dependencies for fedora-autoinstall
-# Cross-platform (Windows 11, macOS, Linux)
+# macOS / Linux
 
 # vLLM router runtime (scripts/vllm-router.py)
 fastapi>=0.110,<1

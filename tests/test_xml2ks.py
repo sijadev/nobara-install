@@ -779,11 +779,17 @@ class GenerateKickstartTests(unittest.TestCase):
 
     # ── RPM-basierte Installation ─────────────────────────────────────────────
 
-    def test_rpm_repo_directive_present(self):
-        """KS muss repo-Direktive für lokales RPM-Repo enthalten."""
+    def test_rpm_repo_directive_not_in_kickstart(self):
+        """Repo ist jetzt via inst.addrepo in grub.cfg — darf nicht mehr im Kickstart stehen."""
         ks = xml2ks.generate_kickstart(load_fixture("minimal.xml"))
-        self.assertIn("repo --name=fedora-autoinstall", ks)
-        self.assertIn("file:///run/install/repo/rpm", ks)
+        self.assertNotIn("repo --name=fedora-autoinstall", ks)
+        self.assertNotIn("file:///run/install/repo/rpm", ks)
+
+    def test_rpm_no_kickstart_repo_directives(self):
+        """Regression: weder primäre Repo-Direktive noch stage2-Fallback im Kickstart."""
+        ks = xml2ks.generate_kickstart(load_fixture("minimal.xml"))
+        self.assertNotIn("repo --name=fedora-autoinstall", ks)
+        self.assertNotIn("fedora-autoinstall-stage2", ks)
 
     def test_rpm_package_in_packages_block(self):
         """fedora-autoinstall RPM muss im %packages Block stehen."""

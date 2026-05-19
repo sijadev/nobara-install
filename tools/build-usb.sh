@@ -11,7 +11,7 @@
 #   RPMs werden in iso/kernel-cache/ gecacht.
 #   Später: Bazzite-Kernel für Blackwell-Support (RTX 9070/50xx) austauschbar.
 #
-# Stage2: lokale Fedora-ISO auf USB (offline-freundlich).
+# Stage2: Fedora Mirror (Netzwerk) — kein ISO auf USB nötig.
 #
 # Usage:
 #   sudo tools/build-usb.sh /dev/sdX
@@ -57,15 +57,6 @@ remove_usb_metadata_files() {
     # macOS can create AppleDouble sidecar files on FAT volumes.
     find "$target_dir" -type f \( -name '._*' -o -name '.DS_Store' \) -delete 2>/dev/null || true
     find "$target_dir" -type d -name '__MACOSX' -prune -exec rm -rf {} + 2>/dev/null || true
-}
-
-copy_iso_to_usb() {
-    local src_iso="$1"
-    local target_dir="$2"
-
-    [[ -f "$src_iso" ]] || return 1
-    mkdir -p "$target_dir/iso"
-    install -m 0644 "$src_iso" "$target_dir/iso/fedora-netinst.iso"
 }
 
 validate_extracted_boot_artifacts() {
@@ -171,7 +162,7 @@ build_on_macos() {
     USB_SIZE_GB=$(( size_bytes / 1024 / 1024 / 1024 ))
     log "Gerät: $usb_whole  (${USB_SIZE_GB} GB)"
     (( USB_SIZE_GB >= 4 ))  || die "USB-Stick zu klein: ${USB_SIZE_GB} GB (min 4 GB)"
-    (( USB_SIZE_GB <= 512 )) || die "Gerät mit ${USB_SIZE_GB} GB wirkt suspekt groß — abgebrochen."
+    (( USB_SIZE_GB <= 2048 )) || die "Gerät mit ${USB_SIZE_GB} GB wirkt suspekt groß — abgebrochen."
 
     root_whole=$(diskutil info -plist / 2>/dev/null | plutil -extract ParentWholeDisk raw - 2>/dev/null || true)
     if [[ -n "$root_whole" && "$usb_whole" == "/dev/${root_whole}" ]]; then
@@ -217,7 +208,6 @@ build_on_macos() {
 
     cp "${WORK_DIR}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
     cp "${WORK_DIR}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
-    copy_iso_to_usb "$src_iso" "$DATA_MNT"
 
     validate_extracted_boot_artifacts "${WORK_DIR}/vmlinuz" "${WORK_DIR}/initrd.img" \
         || die "Extrahierte Boot-Dateien sind ungültig (ISO defekt/trunkiert?)."
@@ -229,7 +219,8 @@ build_on_macos() {
 
     step "USB-Stick partitionieren: $usb_whole"
     diskutil unmountDisk force "$usb_whole" >/dev/null 2>&1 || true
-    diskutil partitionDisk "$usb_whole" GPT FAT32 EFI 1G FAT32 FEDORA-USB R >/dev/null || die "Partitionierung fehlgeschlagen."
+    # Create exactly one data partition; GPT provides the single EFI system slice.
+    diskutil partitionDisk "$usb_whole" GPT FAT32 FEDORA-USB R >/dev/null || die "Partitionierung fehlgeschlagen."
 
     EFI_PART=""
     DATA_PART=""
@@ -237,20 +228,12 @@ build_on_macos() {
         [[ -n "$part" ]] || continue
         vol_name=$(diskutil info -plist "/dev/${part}" 2>/dev/null | plutil -extract VolumeName raw - 2>/dev/null || true)
         part_content=$(diskutil info -plist "/dev/${part}" 2>/dev/null | plutil -extract Content raw - 2>/dev/null || true)
-        case "$vol_name" in
-            EFI)
-                # Prefer the partition we created via diskutil partitionDisk
-                # (Content "Microsoft Basic Data") over the tiny auto EFI slice.
-                if [[ "$part_content" == "Microsoft Basic Data" ]]; then
-                    EFI_PART="/dev/${part}"
-                elif [[ -z "$EFI_PART" ]]; then
-                    EFI_PART="/dev/${part}"
-                fi
-                ;;
-            FEDORA-USB)
-                DATA_PART="/dev/${part}"
-                ;;
-        esac
+        if [[ "$part_content" == "EFI" ]]; then
+            EFI_PART="/dev/${part}"
+        fi
+        if [[ "$vol_name" == "FEDORA-USB" ]]; then
+            DATA_PART="/dev/${part}"
+        fi
     done < <(diskutil list "$usb_whole" | awk '/disk[0-9]+s[0-9]+$/ {print $NF}')
     [[ -n "$EFI_PART" && -n "$DATA_PART" ]] || die "Konnte EFI/FEDORA-USB Partitionen nicht ermitteln."
 
@@ -430,7 +413,6 @@ mount -o loop,ro "$src_iso" "$ISO_MNT"
 
 cp "${ISO_MNT}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
 cp "${ISO_MNT}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
-    copy_iso_to_usb "$src_iso" "$DATA_MNT"
 
 validate_extracted_boot_artifacts "${WORK_DIR}/vmlinuz" "${WORK_DIR}/initrd.img" \
     || die "Extrahierte Boot-Dateien sind ungültig (ISO defekt/trunkiert?)."

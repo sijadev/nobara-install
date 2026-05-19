@@ -3,15 +3,10 @@ SHELL := /bin/sh
 VENV_DIR ?= .venv
 UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
 
-ifeq ($(OS),Windows_NT)
-	VENV_PY := $(VENV_DIR)/Scripts/python.exe
-	VENV_PIP := $(VENV_DIR)/Scripts/pip.exe
-else
-	VENV_PY := $(VENV_DIR)/bin/python
-	VENV_PIP := $(VENV_DIR)/bin/pip
-endif
+VENV_PY := $(VENV_DIR)/bin/python
+VENV_PIP := $(VENV_DIR)/bin/pip
 
-.PHONY: help check-os-prereqs venv install install-dev test run-all run-all-verbose run-all-full run-all-e2e run-all-full-e2e install-usb install-podman install-podman-debug install-fedora-podman e2e test-full-e2e clean
+.PHONY: help check-os-prereqs venv install install-dev test run-all run-all-verbose run-all-full run-all-e2e run-all-full-e2e install-usb install-podman install-podman-debug install-fedora-podman e2e test-full-e2e vm-gui vm-gui-virtual podman-machine-setup clean
 
 help:
 	@echo "Targets:"
@@ -29,29 +24,16 @@ help:
 	@echo "  make install-fedora-podman - Fedora-Installation in Podman starten"
 	@echo "  make install-podman - Installation in Podman mit virtuellem USB"
 	@echo "  make install-podman-debug - Podman-Install, Container bei Fehler behalten"
+	@echo "  make vm-gui      - Graphische VM-Full-Installation auf macOS mit USB verfolgen"
+	@echo "  make vm-gui-virtual - VM-Test mit virtueller USB (kein Stick noetig, nach make install-podman)"
+	@echo "  make podman-machine-setup - Podman-Machine einmalig auf 8 GB RAM / 6 CPUs konfigurieren (macOS)"
 	@echo "  make e2e         - Alias fur install-podman"
 	@echo "  make test-full-e2e - Voller Testlauf inkl. Podman E2E"
 	@echo "  make clean       - venv entfernen"
 
 check-os-prereqs:
 	@echo "Pruefe OS Voraussetzungen..."
-	@if [ "$(OS)" = "Windows_NT" ]; then \
-		if command -v python >/dev/null 2>&1; then \
-			PY_CMD=python; \
-		elif command -v py >/dev/null 2>&1; then \
-			PY_CMD="py -3"; \
-		else \
-			echo "Fehlt: Python 3"; \
-			echo "Install (Windows): winget install Python.Python.3.12"; \
-			exit 1; \
-		fi; \
-		$$PY_CMD -c "import venv" >/dev/null 2>&1 || { \
-			echo "Fehlt: Python venv Modul"; \
-			echo "Bitte Python 3 mit venv-Unterstuetzung installieren."; \
-			exit 1; \
-		}; \
-		echo "OK: Windows Voraussetzungen erfuellt"; \
-	elif [ "$(UNAME_S)" = "Darwin" ]; then \
+	@if [ "$(UNAME_S)" = "Darwin" ]; then \
 		command -v python3 >/dev/null 2>&1 || { \
 			echo "Fehlt: python3"; \
 			echo "Install (macOS): brew install python"; \
@@ -83,15 +65,7 @@ venv: check-os-prereqs
 		echo "Venv existiert bereits: $(VENV_DIR)"; \
 	else \
 		echo "Erstelle venv: $(VENV_DIR)"; \
-		if [ "$(OS)" = "Windows_NT" ]; then \
-			if command -v python >/dev/null 2>&1; then \
-				python -m venv "$(VENV_DIR)"; \
-			else \
-				py -3 -m venv "$(VENV_DIR)"; \
-			fi; \
-		else \
-			python3 -m venv "$(VENV_DIR)"; \
-		fi; \
+		python3 -m venv "$(VENV_DIR)"; \
 	fi
 	@"$(VENV_PIP)" install --upgrade pip
 
@@ -128,16 +102,34 @@ install-usb:
 	@sudo ./install.sh "$(DEVICE)"
 
 install-podman:
-	@python3 tests/test_podman_e2e_usb.py --run
+	@"$(VENV_PY)" tests/test_podman_e2e_usb.py --run
 
 install-podman-debug:
-	@python3 tests/test_podman_e2e_usb.py --run --keep-on-fail
+	@"$(VENV_PY)" tests/test_podman_e2e_usb.py --run --keep-on-fail
 
 install-fedora-podman: install-podman
 
 e2e: install-podman
 
 test-full-e2e: run-all-full-e2e
+
+vm-gui:
+	@if [ -z "$(DEVICE)" ]; then \
+		echo "Fehlt: DEVICE"; \
+		echo "Beispiel macOS: make vm-gui DEVICE=/dev/diskN"; \
+		exit 2; \
+	fi
+	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200 --usb-device "$(DEVICE)"
+
+vm-gui-virtual:
+	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200
+
+podman-machine-setup:
+	@echo "Konfiguriere Podman-Machine fuer Pipeline (einmalig)..."
+	@podman machine stop || true
+	@podman machine set --memory 8192 --cpus 6
+	@podman machine start
+	@echo "Podman-Machine bereit (8 GB RAM, 6 CPUs)."
 
 clean:
 	@echo "Entferne venv: $(VENV_DIR)"
