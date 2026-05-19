@@ -292,9 +292,42 @@ if [[ "$INSTALL_PROFILE" == "nvidia-cuda" ]]; then
             && log "NVIDIA Open Driver + xorg-cuda installiert." \
             || warn "NVIDIA Open Driver Installation fehlgeschlagen (non-fatal)."
 
+        # Nouveau dauerhaft blacklisten — kollidiert sonst beim Boot mit nvidia-open.
+        cat > /etc/modprobe.d/blacklist-nouveau.conf <<'MEOF'
+blacklist nouveau
+options nouveau modeset=0
+MEOF
+        grubby --update-kernel=ALL \
+            --args="modprobe.blacklist=nouveau rd.driver.blacklist=nouveau nvidia-drm.modeset=1" \
+            2>/dev/null \
+            && log "GRUB: nouveau blacklist + nvidia-drm.modeset=1 gesetzt." \
+            || warn "grubby NVIDIA-Kernel-Args fehlgeschlagen (non-fatal)."
+
+        nvidia_module_ok=0
         if command -v akmods &>/dev/null; then
             log "Building kernel modules (akmods)..."
-            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
+            if akmods --force; then
+                nvidia_module_ok=1
+                log "akmods: NVIDIA-Modul erfolgreich gebaut."
+            else
+                warn "akmods fehlgeschlagen — NVIDIA-Modul nicht verfügbar."
+            fi
+        fi
+
+        if [[ "$nvidia_module_ok" -eq 1 ]]; then
+            # Initramfs für alle Kernel neu bauen damit NVIDIA-Modul eingebunden ist.
+            dracut --regenerate-all --force 2>/dev/null \
+                && log "Initramfs für alle Kernel rebuilt (NVIDIA)." \
+                || warn "dracut --regenerate-all fehlgeschlagen (non-fatal)."
+        else
+            # NVIDIA-Modul nicht verfügbar — Fedora-Kernel als sicherer Fallback.
+            FALLBACK_KERNEL=$(ls /boot/vmlinuz-[0-9]* 2>/dev/null \
+                | grep -v cachyos | sort -V | tail -1 || true)
+            if [[ -n "$FALLBACK_KERNEL" ]]; then
+                grubby --set-default "$FALLBACK_KERNEL" \
+                    && log "Fallback: Fedora-Kernel als Default gesetzt: $(basename "$FALLBACK_KERNEL")" \
+                    || warn "grubby --set-default Fallback fehlgeschlagen (non-fatal)."
+            fi
         fi
 
         step "CUDA Toolkit (NVIDIA-Repo)"
@@ -423,8 +456,11 @@ case "$mode" in
         done
         ;;
     bitwig)
-        # Audio-optimiertes Profil fuer DAW/Recording
+        # Audio-optimiertes Profil fuer DAW/Recording: latency-performance + performance-Governor
         /usr/sbin/tuned-adm profile latency-performance >/dev/null 2>&1 || true
+        for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance > "$f" 2>/dev/null || true
+        done
         ;;
     balanced)
         /usr/sbin/tuned-adm profile balanced >/dev/null 2>&1 || true
@@ -762,8 +798,8 @@ fi
 SUDOERS_FILE="/etc/sudoers.d/fedora-first-login"
 if [[ ! -f "$SUDOERS_FILE" ]]; then
     cat > "$SUDOERS_FILE" <<SUDEOF
-# Allows ${TARGET_USER} to run dnf without password during first-login
-${TARGET_USER} ALL=(root) NOPASSWD: /usr/bin/dnf
+# Passwordless dnf (first-login) + cpu-profile switch (Bitwig wrapper)
+${TARGET_USER} ALL=(root) NOPASSWD: /usr/bin/dnf, /usr/local/bin/fedora-cpu-profile
 SUDEOF
     chmod 0440 "$SUDOERS_FILE"
     visudo -c -f "$SUDOERS_FILE" \
