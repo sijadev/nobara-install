@@ -1,0 +1,2 @@
+[console_scripts]
+fedora-autoinstall = fedora_autoinstall.main:app

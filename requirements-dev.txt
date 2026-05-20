@@ -3,5 +3,7 @@
 -r requirements.txt
 
 # Kickstart validator CLI used by tests/test_kickstart_validator.py
-# Relevant on Linux/macOS; excluded on Windows.
 pykickstart>=3.58; platform_system != "Windows"
+
+# CLI-Paket im Entwicklungsmodus
+-e cli/

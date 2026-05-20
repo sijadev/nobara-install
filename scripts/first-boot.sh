@@ -836,3 +836,10 @@ marker_set() { mkdir -p "$(dirname "$1")"; touch "$1"; }
 marker_set "$MARKER_FILE"
 log "Marker written: $MARKER_FILE"
 log "First-boot provisioning finished successfully."
+
+# Sofort zu graphical.target wechseln (startet GDM/GNOME ohne Neustart).
+# --no-block: first-boot.service kann sauber beenden während GUI startet.
+if ! is_headless_profile; then
+    log "Starte graphical.target (GDM/GNOME)..."
+    systemctl --no-block isolate graphical.target 2>/dev/null || true
+fi

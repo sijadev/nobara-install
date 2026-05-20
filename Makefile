@@ -96,10 +96,10 @@ write-iso:
 	fi
 
 vm-gui-iso:
-	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200 --iso $$(ls -t iso/fedora-autoinstall-*.iso 2>/dev/null | head -1)
+	@sudo "$(VENV_PY)" tests/test_anaconda_vm.py --run --gui --watch-install --keep-on-fail --timeout 1200 --iso $$(ls -t iso/fedora-autoinstall-*.iso 2>/dev/null | head -1)
 
 vm-gui-virtual:
-	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200
+	@sudo "$(VENV_PY)" tests/test_anaconda_vm.py --run --gui --watch-install --keep-on-fail --timeout 1200
 
 clean:
 	@echo "Entferne venv: $(VENV_DIR)"

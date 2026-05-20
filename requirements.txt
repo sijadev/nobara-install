@@ -1,7 +1,12 @@
 # Runtime Python dependencies for fedora-autoinstall
 # macOS / Linux
 
+# CLI-Konfigurator (fedora-autoinstall search/add/build/...)
+typer>=0.12,<1
+rich>=13,<14
+httpx>=0.27,<1
+pydantic>=2,<3
+
 # vLLM router runtime (scripts/vllm-router.py)
 fastapi>=0.110,<1
-httpx>=0.27,<1
 uvicorn[standard]>=0.30,<1
