@@ -78,21 +78,25 @@ jobs:
           python3 - "$ISO" <<'PY'
           import struct, sys
           iso = sys.argv[1]
-          with open(iso,'rb') as f:
-              f.seek(512); gpt=f.read(92)
-              assert gpt[:8]==b'EFI PART'
-              pl=struct.unpack_from('<Q',gpt,72)[0]
-              np=struct.unpack_from('<I',gpt,80)[0]
-              ps=struct.unpack_from('<I',gpt,84)[0]
-              f.seek(pl*512)
-              for _ in range(np):
-                  e=f.read(ps)
-                  if len(e)<128: break
-                  s,end=struct.unpack_from('<Q',e,32)[0],struct.unpack_from('<Q',e,40)[0]
-                  if s and 10<(end-s+1)*512/1024/1024<20:
-                      f.seek(s*512); d=f.read((end-s+1)*512)
-                      ok = b'inst.ks' in d and b'set default="0"' in d
-                      print(f"EFI-FAT: inst.ks={'OK' if b'inst.ks' in d else 'FEHLT'}, default=0={'OK' if b'set default=\"0\"' in d else 'FEHLT'}")
+          with open(iso, 'rb') as f:
+              f.seek(512); gpt = f.read(92)
+              assert gpt[:8] == b'EFI PART', 'Kein GPT'
+              pl = struct.unpack_from('<Q', gpt, 72)[0]
+              np2 = struct.unpack_from('<I', gpt, 80)[0]
+              ps = struct.unpack_from('<I', gpt, 84)[0]
+              f.seek(pl * 512)
+              for _ in range(np2):
+                  e = f.read(ps)
+                  if len(e) < 128: break
+                  s, end = struct.unpack_from('<Q', e, 32)[0], struct.unpack_from('<Q', e, 40)[0]
+                  if s and 10 < (end - s + 1) * 512 / 1024 / 1024 < 20:
+                      f.seek(s * 512)
+                      d = f.read((end - s + 1) * 512)
+                      ks_ok      = 'OK' if b'inst.ks' in d else 'FEHLT'
+                      repo_ok    = 'OK' if b'inst.addrepo' in d else 'FEHLT'
+                      default_ok = 'OK' if b'set default="0"' in d else 'FEHLT'
+                      print('EFI-FAT: inst.ks=' + ks_ok + ' inst.addrepo=' + repo_ok + ' default=0=' + default_ok)
+                      ok = ks_ok == 'OK' and repo_ok == 'OK' and default_ok == 'OK'
                       sys.exit(0 if ok else 1)
           PY
 
