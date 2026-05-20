@@ -69,6 +69,7 @@ jobs:
 
       # ── ISO-Info ─────────────────────────────────────────────────────────────
       - name: ISO info
+        continue-on-error: true
         run: |
           ISO=$(ls -t iso/fedora-autoinstall-*.iso | head -1)
           echo "ISO: $ISO"
