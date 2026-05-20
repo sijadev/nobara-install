@@ -168,6 +168,14 @@ elif [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
             kernel-cachyos \
             kernel-cachyos-devel 2>/dev/null; then
             log "CachyOS-Kernel installiert."
+            # COPR-Kernel liegt in /lib/modules/ — kernel-install trägt ihn in /boot/ ein
+            CACHYOS_VER=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-cachyos 2>/dev/null | head -1 || true)
+            CACHYOS_VMLINUZ="/lib/modules/${CACHYOS_VER}/vmlinuz"
+            if [[ -n "$CACHYOS_VER" && -f "$CACHYOS_VMLINUZ" ]]; then
+                kernel-install add "$CACHYOS_VER" "$CACHYOS_VMLINUZ" 2>/dev/null \
+                    && log "CachyOS-Kernel via kernel-install in /boot/ eingetragen: ${CACHYOS_VER}" \
+                    || warn "kernel-install fehlgeschlagen — grubby-Fallback."
+            fi
             if command -v grubby &>/dev/null; then
                 NEW_KERNEL=$(ls /boot/vmlinuz-*cachyos* 2>/dev/null | sort -V | tail -1 || true)
                 if [[ -n "$NEW_KERNEL" ]]; then
@@ -584,11 +592,23 @@ if findmnt -n -o FSTYPE / 2>/dev/null | grep -qx 'btrfs'; then
         && log "timeshift + inotify-tools installiert." \
         || warn "timeshift install fehlgeschlagen (non-fatal)."
 
-    # grub-btrfs ist direkt in Fedora-Repos verfügbar (kein COPR nötig)
-    if ! rpm -q grub-btrfs &>/dev/null; then
-        run_dnf_retry dnf install -y grub-btrfs \
-            && log "grub-btrfs installiert." \
-            || warn "grub-btrfs install fehlgeschlagen (non-fatal)."
+    # grub-btrfs ist in Fedora 43 nicht mehr im Repo — btrfs-assistant als Ersatz.
+    if ! rpm -q btrfs-assistant &>/dev/null; then
+        run_dnf_retry dnf install -y btrfs-assistant \
+            && log "btrfs-assistant installiert (Btrfs-GUI + Snapshot-Browser)." \
+            || warn "btrfs-assistant install fehlgeschlagen (non-fatal)."
+    fi
+
+    # grub-btrfs aus GitHub — fügt Snapshots ins GRUB-Menü ein
+    if ! command -v grub-btrfsd &>/dev/null; then
+        if git clone --depth=1 https://github.com/Antynea/grub-btrfs /tmp/grub-btrfs 2>/dev/null; then
+            make -C /tmp/grub-btrfs install 2>/dev/null \
+                && log "grub-btrfs aus GitHub installiert." \
+                || warn "grub-btrfs install fehlgeschlagen (non-fatal)."
+            rm -rf /tmp/grub-btrfs
+        else
+            warn "grub-btrfs GitHub-Clone fehlgeschlagen (non-fatal)."
+        fi
     fi
 
     # Bei Btrfs-Subvolumes enthält SOURCE den Subvolume-Pfad (z.B. /dev/vda3[@])
@@ -801,8 +821,8 @@ fi
 SUDOERS_FILE="/etc/sudoers.d/fedora-first-login"
 if [[ ! -f "$SUDOERS_FILE" ]]; then
     cat > "$SUDOERS_FILE" <<SUDEOF
-# Passwordless dnf (first-login) + cpu-profile switch (Bitwig wrapper)
-${TARGET_USER} ALL=(root) NOPASSWD: /usr/bin/dnf, /usr/local/bin/fedora-cpu-profile
+# Passwordless: dnf (first-login) + cpu-profile (Bitwig) + provision (App)
+${TARGET_USER} ALL=(root) NOPASSWD: /usr/bin/dnf, /usr/local/bin/fedora-cpu-profile, /usr/local/share/fedora-autoinstall/fedora-provision.sh
 SUDEOF
     chmod 0440 "$SUDOERS_FILE"
     visudo -c -f "$SUDOERS_FILE" \

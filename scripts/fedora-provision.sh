@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # fedora-provision.sh — Provisioniert ein bestehendes Fedora-System
 #
-# Dieses Skript wird vom Ventoy-USB-Stick aus im LAUFENDEN System gestartet.
-# Es installiert KEIN neues OS — es richtet das gewählte Profil auf dem
-# bereits installierten System ein und startet die Provisionierung.
+# Richtet das gewählte Profil auf einem bereits installierten Fedora-System ein.
+# Es installiert KEIN neues OS.
 #
 # Nutzung:
-#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
-#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
-#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile full
+#   sudo bash /usr/local/share/fedora-autoinstall/fedora-provision.sh --profile theme-bash
+#   sudo bash /usr/local/share/fedora-autoinstall/fedora-provision.sh --profile headless-vllm
+#   sudo bash /usr/local/share/fedora-autoinstall/fedora-provision.sh --profile full
 #
 # Optionen:
 #   --profile   full | theme-bash | headless-vllm | cachyos-kernel  (erforderlich)
@@ -291,9 +290,37 @@ fi
 
 # ── Sofort starten (optional) ─────────────────────────────────────────────────
 if [[ "$RUN_NOW" == "1" ]]; then
-    step "First-Boot sofort starten"
-    systemctl_safe start fedora-first-boot.service
-    log "first-boot gestartet — Logs: journalctl -fu fedora-first-boot.service"
+    step "First-Boot läuft — Ausgabe direkt im Terminal"
+    echo ""
+
+    # Direkt ausführen statt via systemctl — Ausgabe sofort sichtbar.
+    # first-boot.sh tee'd bereits in LOG_FILE + stdout.
+    FIRST_BOOT_SCRIPT="/usr/local/sbin/fedora-first-boot.sh"
+    [[ -x "$FIRST_BOOT_SCRIPT" ]] || FIRST_BOOT_SCRIPT="/usr/local/share/fedora-autoinstall/scripts/first-boot.sh"
+
+    "$FIRST_BOOT_SCRIPT"
+    BOOT_RC=$?
+
+    echo ""
+    if [[ $BOOT_RC -eq 0 ]]; then
+        log "First-Boot erfolgreich abgeschlossen."
+    else
+        warn "First-Boot mit Exit-Code ${BOOT_RC} beendet."
+    fi
+
+    # Headless-Profile: first-login als Ziel-User direkt starten
+    if [[ ! "$PROFILE" =~ ^(theme-bash|full|cachyos-kernel)$ ]] && [[ $BOOT_RC -eq 0 ]]; then
+        FIRST_LOGIN_SCRIPT="/usr/local/bin/fedora-first-login.sh"
+        if [[ -x "$FIRST_LOGIN_SCRIPT" ]]; then
+            step "First-Login läuft (User: ${TARGET_USER})"
+            echo ""
+            sudo -u "$TARGET_USER" \
+                env HOME="/home/${TARGET_USER}" \
+                    FEDORA_TARGET_USER="$TARGET_USER" \
+                    $(cat /etc/fedora-provision.env 2>/dev/null | tr '\n' ' ') \
+                "$FIRST_LOGIN_SCRIPT" || warn "first-login mit Fehler beendet (non-fatal)."
+        fi
+    fi
 else
     echo ""
     log "Einrichtung abgeschlossen."

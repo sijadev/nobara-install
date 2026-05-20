@@ -45,20 +45,32 @@ zenity --question \
     --text="Profil <b>${CHOICE}</b> jetzt einrichten?\n\nDie Installation läuft in einem Terminal-Fenster.\nSie können den Fortschritt live mitverfolgen." \
     2>/dev/null || exit 0
 
-# Provision-Script starten — pkexec für root-Rechte
+# Provision-Script starten — via sudo (zeigt Passwort-Prompt direkt im Terminal)
 TERMINAL=""
-for t in gnome-terminal kgx ptyxis konsole xterm; do
+for t in ptyxis kgx gnome-terminal konsole xterm; do
     if command -v "$t" &>/dev/null; then TERMINAL="$t"; break; fi
 done
 [[ -z "$TERMINAL" ]] && { zenity --error --text="Kein Terminal-Emulator gefunden."; exit 1; }
 
-CMD="pkexec $PROVISION_SCRIPT --profile $CHOICE --user $USER --run-now"
+# Kommando als Datei schreiben — vermeidet Quoting-Probleme in bash -c
+RUN_SCRIPT=$(mktemp /tmp/fedora-provision-XXXXXX.sh)
+cat > "$RUN_SCRIPT" << RUNEOF
+#!/bin/bash
+echo "=== Fedora Provisioner: ${CHOICE} ==="
+echo ""
+sudo bash "$PROVISION_SCRIPT" --profile "${CHOICE}" --user "${USER}" --run-now
+echo ""
+echo "--- Provisionierung abgeschlossen ---"
+read -rp "[Enter zum Schließen] " _DUMMY
+rm -f "$RUN_SCRIPT"
+RUNEOF
+chmod +x "$RUN_SCRIPT"
 
 case "$TERMINAL" in
-    gnome-terminal) gnome-terminal --title="Fedora Provisioner: $CHOICE" -- bash -c "$CMD; echo; read -p '[Enter zum Schließen]'" ;;
-    kgx|ptyxis)     "$TERMINAL" -- bash -c "$CMD; echo; read -p '[Enter zum Schließen]'" ;;
-    konsole)        konsole --hold -e bash -c "$CMD" ;;
-    xterm)          xterm -title "Fedora Provisioner: $CHOICE" -e bash -c "$CMD; echo; read -p '[Enter zum Schließen]'" ;;
+    ptyxis|kgx)     "$TERMINAL" -- bash "$RUN_SCRIPT" ;;
+    gnome-terminal) gnome-terminal --title="Fedora Provisioner: $CHOICE" -- bash "$RUN_SCRIPT" ;;
+    konsole)        konsole --hold -e bash "$RUN_SCRIPT" ;;
+    xterm)          xterm -title "Fedora Provisioner: $CHOICE" -e bash "$RUN_SCRIPT" ;;
 esac
 
 # Marker + Autostart entfernen (nicht den App-Eintrag)

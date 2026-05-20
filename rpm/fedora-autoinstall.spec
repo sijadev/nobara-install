@@ -47,9 +47,11 @@ install -m 0644 scripts/fedora-provision.desktop %{buildroot}/usr/local/share/%{
 # Provision script
 install -m 0755 scripts/fedora-provision.sh     %{buildroot}/usr/local/share/%{name}/
 
-# Systemd unit
+# Systemd units
 install -m 0644 systemd/fedora-first-boot.service %{buildroot}/usr/local/share/%{name}/systemd/
 install -m 0644 systemd/fedora-first-boot.service %{buildroot}/etc/systemd/system/
+install -m 0644 systemd/vllm@.container           %{buildroot}/usr/local/share/%{name}/systemd/
+install -m 0644 systemd/vllm-router.service       %{buildroot}/usr/local/share/%{name}/systemd/
 
 # Symlinks: share → standard Pfade
 ln -sf /usr/local/share/%{name}/scripts/first-boot.sh   %{buildroot}/usr/local/sbin/fedora-first-boot.sh
