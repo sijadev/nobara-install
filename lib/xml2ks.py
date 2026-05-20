@@ -268,11 +268,18 @@ if [[ -z "$DISK" ]]; then
 fi
 [[ -z "$DISK" ]] && {{ echo "ERROR: Keine Installations-Disk gefunden" >&2; exit 1; }}
 echo "Ziel-Disk: $DISK" >&2
+# BIOS+GPT braucht eine biosboot-Partition (1 MiB); EFI-Systeme nicht.
+if [[ -d /sys/firmware/efi ]]; then
+    BIOSBOOT_PART=""
+else
+    BIOSBOOT_PART="part biosboot --fstype=biosboot --size=1"
+fi
 cat > /tmp/disk-setup.cfg <<DEOF
 ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
+${{BIOSBOOT_PART}}
 part /boot/efi --fstype=efi  --size=512
 part /boot     --fstype=ext4 --size=1024
 part btrfs.01  --fstype=btrfs --grow

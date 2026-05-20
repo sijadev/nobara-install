@@ -25,9 +25,10 @@ ignoredisk --only-use=vda
 clearpart --all --initlabel --drives=vda
 autopart --type=plain --nohome
 
-bootloader --location=mbr
+bootloader --disabled
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages --inst-langs=en
-@^minimal-environment
+@core
+kernel
 %end

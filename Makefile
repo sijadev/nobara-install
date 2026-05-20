@@ -6,30 +6,21 @@ UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
 VENV_PY := $(VENV_DIR)/bin/python
 VENV_PIP := $(VENV_DIR)/bin/pip
 
-.PHONY: help check-os-prereqs venv install install-dev test run-all run-all-verbose run-all-full run-all-e2e run-all-full-e2e install-usb install-podman install-podman-debug install-fedora-podman e2e test-full-e2e vm-gui vm-gui-virtual podman-machine-setup clean
+.PHONY: help check-os-prereqs venv install install-dev test build-rpm build-iso write-iso vm-gui-iso vm-gui-virtual clean
 
 help:
 	@echo "Targets:"
-	@echo "  make check-os-prereqs - OS/Python Voraussetzungen pruefen"
-	@echo "  make venv        - Python venv unter $(VENV_DIR) erstellen"
-	@echo "  make install     - Runtime-Abhangigkeiten installieren"
-	@echo "  make install-dev - Dev/Test-Abhangigkeiten installieren"
-	@echo "  make test        - Standard-Testlauf ohne Full/E2E"
-	@echo "  make run-all     - tests/run-all.sh"
-	@echo "  make run-all-verbose - tests/run-all.sh -v"
-	@echo "  make run-all-full - tests/run-all.sh --full"
-	@echo "  make run-all-e2e - tests/run-all.sh --e2e"
-	@echo "  make run-all-full-e2e - tests/run-all.sh --full --e2e"
-	@echo "  make install-usb DEVICE=/dev/sdX - Echte USB-Installation starten"
-	@echo "  make install-fedora-podman - Fedora-Installation in Podman starten"
-	@echo "  make install-podman - Installation in Podman mit virtuellem USB"
-	@echo "  make install-podman-debug - Podman-Install, Container bei Fehler behalten"
-	@echo "  make vm-gui      - Graphische VM-Full-Installation auf macOS mit USB verfolgen"
-	@echo "  make vm-gui-virtual - VM-Test mit virtueller USB (kein Stick noetig, nach make install-podman)"
-	@echo "  make podman-machine-setup - Podman-Machine einmalig auf 8 GB RAM / 6 CPUs konfigurieren (macOS)"
-	@echo "  make e2e         - Alias fur install-podman"
-	@echo "  make test-full-e2e - Voller Testlauf inkl. Podman E2E"
-	@echo "  make clean       - venv entfernen"
+	@echo "  make check-os-prereqs    - OS/Python Voraussetzungen pruefen"
+	@echo "  make venv                - Python venv erstellen"
+	@echo "  make install             - Runtime-Abhaengigkeiten installieren"
+	@echo "  make install-dev         - Dev/Test-Abhaengigkeiten installieren"
+	@echo "  make test                - Unit-Tests ausfuehren"
+	@echo "  make build-rpm           - fedora-autoinstall RPM bauen"
+	@echo "  make build-iso           - Gepatchte ISO bauen (Kickstart + RPM eingebettet)"
+	@echo "  make write-iso DEVICE=/dev/diskN - ISO auf USB schreiben"
+	@echo "  make vm-gui-iso          - VM-Test mit gepatchter ISO"
+	@echo "  make vm-gui-virtual      - VM-Test mit virtueller USB (Fallback)"
+	@echo "  make clean               - venv entfernen"
 
 check-os-prereqs:
 	@echo "Pruefe OS Voraussetzungen..."
@@ -49,7 +40,6 @@ check-os-prereqs:
 			echo "Fehlt: python3"; \
 			echo "Install (Fedora): sudo dnf install python3"; \
 			echo "Install (Debian/Ubuntu): sudo apt install python3 python3-venv"; \
-			echo "Install (Arch): sudo pacman -S python"; \
 			exit 1; \
 		}; \
 		python3 -c "import venv" >/dev/null 2>&1 || { \
@@ -75,61 +65,41 @@ install: venv
 install-dev: venv
 	@"$(VENV_PIP)" install -r requirements-dev.txt
 
-run-all:
+test:
 	@bash tests/run-all.sh
 
-run-all-verbose:
-	@bash tests/run-all.sh -v
+build-rpm:
+	@bash tools/build-rpm.sh
 
-run-all-full:
-	@bash tests/run-all.sh --full
+build-iso: build-rpm
+	@bash tools/build-iso.sh
 
-run-all-e2e:
-	@bash tests/run-all.sh --e2e
-
-run-all-full-e2e:
-	@bash tests/run-all.sh --full --e2e
-
-test: run-all
-
-install-usb:
+write-iso:
 	@if [ -z "$(DEVICE)" ]; then \
 		echo "Fehlt: DEVICE"; \
-		echo "Beispiel Linux: make install-usb DEVICE=/dev/sdX"; \
-		echo "Beispiel macOS: make install-usb DEVICE=/dev/diskN"; \
+		echo "Beispiel macOS: make write-iso DEVICE=/dev/diskN"; \
+		echo "Beispiel Linux: make write-iso DEVICE=/dev/sdX"; \
 		exit 2; \
 	fi
-	@sudo ./install.sh "$(DEVICE)"
-
-install-podman:
-	@"$(VENV_PY)" tests/test_podman_e2e_usb.py --run
-
-install-podman-debug:
-	@"$(VENV_PY)" tests/test_podman_e2e_usb.py --run --keep-on-fail
-
-install-fedora-podman: install-podman
-
-e2e: install-podman
-
-test-full-e2e: run-all-full-e2e
-
-vm-gui:
-	@if [ -z "$(DEVICE)" ]; then \
-		echo "Fehlt: DEVICE"; \
-		echo "Beispiel macOS: make vm-gui DEVICE=/dev/diskN"; \
-		exit 2; \
+	@ISO=$$(ls -t iso/fedora-autoinstall-*.iso 2>/dev/null | head -1); \
+	[ -n "$$ISO" ] || { echo "Kein ISO gefunden — zuerst: make build-iso"; exit 1; }; \
+	echo "Schreibe $$(basename $$ISO) → $(DEVICE)"; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		diskutil unmountDisk force "$(DEVICE)" 2>/dev/null || true; \
+		RAW=$$(echo "$(DEVICE)" | sed 's|/dev/disk|/dev/rdisk|'); \
+		sudo dd if="$$ISO" of="$$RAW" bs=4m; \
+		sync; \
+		diskutil eject "$(DEVICE)" 2>/dev/null || true; \
+		echo "Fertig — Stick kann abgezogen werden."; \
+	else \
+		sudo dd if="$$ISO" of="$(DEVICE)" bs=4M status=progress; \
 	fi
-	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200 --usb-device "$(DEVICE)"
+
+vm-gui-iso:
+	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200 --iso $$(ls -t iso/fedora-autoinstall-*.iso 2>/dev/null | head -1)
 
 vm-gui-virtual:
 	@sudo "$(VENV_PY)" tests/test_anaconda_vm_usb.py --run --gui --watch-install --keep-on-fail --timeout 1200
-
-podman-machine-setup:
-	@echo "Konfiguriere Podman-Machine fuer Pipeline (einmalig)..."
-	@podman machine stop || true
-	@podman machine set --memory 8192 --cpus 6
-	@podman machine start
-	@echo "Podman-Machine bereit (8 GB RAM, 6 CPUs)."
 
 clean:
 	@echo "Entferne venv: $(VENV_DIR)"

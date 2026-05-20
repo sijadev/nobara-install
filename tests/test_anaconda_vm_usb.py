@@ -180,9 +180,26 @@ def linux_libvirt_flow(
     return 0
 
 
+def _read_iso_label(iso_path: str) -> str:
+    """ISO-Volume-Label aus der GRUB-Konfiguration lesen (von mkksiso gesetzt)."""
+    try:
+        proc = subprocess.run(
+            ["bsdtar", "-xf", iso_path, "-O", "boot/grub2/grub.cfg"],
+            capture_output=True, text=True, check=False,
+        )
+        for line in proc.stdout.splitlines():
+            m = re.search(r"hd:LABEL=([^\s/]+)", line)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return "Fedora-E-dvd-x86_64-43"
+
+
 def macos_qemu_flow(
     usb_device: str,
     usb_image: str,
+    iso_image: str,
     timeout_seconds: int,
     keep_on_fail: bool,
     gui: bool,
@@ -205,6 +222,20 @@ def macos_qemu_flow(
     serial_log = workdir / "serial.log"
     vmlinuz_copy = workdir / "vmlinuz"
     initrd_copy = workdir / "initrd.img"
+    project_dir = Path(__file__).resolve().parent.parent
+    log_dir = project_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    # Serial-Log direkt in logs/ — sofort ohne sudo lesbar via tail -f
+    serial_log = log_dir / "vm-serial.log"
+
+    def save_logs() -> None:
+        # Log liegt bereits in logs/ — nur Berechtigungen öffnen damit der aufrufende User lesen kann
+        if serial_log.exists():
+            try:
+                serial_log.chmod(0o644)
+            except Exception:
+                pass
+            print(f"[anaconda-vm] Log: {serial_log}")
 
     qemu_proc: subprocess.Popen[str] | None = None
 
@@ -218,7 +249,7 @@ def macos_qemu_flow(
                 qemu_proc.kill()
 
         if success or not keep_on_fail:
-            for p in (install_disk, serial_log, vmlinuz_copy, initrd_copy):
+            for p in (install_disk, vmlinuz_copy, initrd_copy):
                 try:
                     p.unlink(missing_ok=True)
                 except Exception:
@@ -235,7 +266,24 @@ def macos_qemu_flow(
         print("[anaconda-vm] FAIL: qemu-img create fehlgeschlagen")
         return 1
 
-    if usb_image:
+    if iso_image:
+        # ISO-Modus: vmlinuz/initrd direkt aus der gepatchten ISO extrahieren.
+        iso_extract = workdir / "iso_extract"
+        iso_extract.mkdir()
+        rc = run(["bsdtar", "-xf", iso_image, "-C", str(iso_extract),
+                  "images/pxeboot/vmlinuz", "images/pxeboot/initrd.img"])
+        if rc != 0:
+            print(f"[anaconda-vm] FAIL: Boot-Dateien konnten nicht aus ISO extrahiert werden")
+            save_logs()
+            cleanup(success=False)
+            return 1
+        shutil.copy2(iso_extract / "images/pxeboot/vmlinuz",    vmlinuz_copy)
+        shutil.copy2(iso_extract / "images/pxeboot/initrd.img", initrd_copy)
+        shutil.rmtree(iso_extract, ignore_errors=True)
+        print(f"[anaconda-vm] ISO-Modus: {iso_image}")
+        print(f"[anaconda-vm] vmlinuz: {vmlinuz_copy.stat().st_size // 1024 // 1024} MB")
+        print(f"[anaconda-vm] initrd:  {initrd_copy.stat().st_size // 1024 // 1024} MB")
+    elif usb_image:
         # Virtueller USB-Modus: vorgebautes Image + exportierte Boot-Dateien nutzen.
         usb_raw = usb_image
         project_dir = Path(__file__).resolve().parent.parent
@@ -288,43 +336,81 @@ def macos_qemu_flow(
 
     accel = macos_qemu_accel()
     cpu_model = macos_qemu_cpu(accel)
-
-    # Kernel cmdline matches the [m] VM-Test entry from boot/grub.cfg.
-    # inst.text keeps output on the serial console for marker detection.
-    # console=ttyS0 routes kernel+Anaconda output to the -serial log file.
-    display_mode = "inst.graphical" if (gui and watch_install) else "inst.text"
-    kernel_args = (
-        "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/ "
-        "inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/ "
-        f"inst.ks=hd:LABEL=FEDORA-USB:/kickstart/fedora-vm.ks "
-        f"nomodeset rd.retry=30 {display_mode} "
-        "console=tty0 console=ttyS0,115200"
+    # ISO-Modus: immer inst.text — graphical braucht viel RAM/CPU im VM und
+    # blockiert den Serial-Log. USB-Modus folgt dem gui-Flag.
+    if iso_image:
+        display_mode = "inst.text"
+    else:
+        display_mode = "inst.graphical" if (gui and watch_install) else "inst.text"
+    log_args = (
+        "console=tty0 console=ttyS0,115200 "
+        "systemd.journald.forward_to_console=1 systemd.console_level=6 "
+        "systemd.log_target=console systemd.log_level=info "
+        "systemd.mask=brltty.service"
     )
 
-    qemu_cmd = [
-        "qemu-system-x86_64",
-        "-accel", accel,
-        "-machine", "q35",
-        "-cpu", cpu_model,
-        "-m", "4096",
-        "-smp", "4",
-        # Direct kernel boot: QEMU loads vmlinuz+initrd directly, no firmware needed.
-        "-kernel", str(vmlinuz_copy),
-        "-initrd", str(initrd_copy),
-        "-append", kernel_args,
-        # Target disk for the installation.
-        "-drive", f"if=virtio,file={install_disk},format=qcow2",
-        # USB raw device: Anaconda finds kickstart via hd:LABEL=FEDORA-USB.
-        # snapshot=on keeps the physical stick unmodified (QEMU COW overlay).
-        "-drive", f"if=none,id=usbdrive,file={usb_raw},format=raw,snapshot=on",
-        "-device", "virtio-blk-pci,drive=usbdrive",
-        "-serial", f"file:{serial_log}",
-        "-monitor", "none",
-        "-no-reboot",
-    ]
+    if iso_image:
+        # ISO-Modus: Stage2 + Kickstart + RPM-Repo per Volume-Label.
+        # inst.disk=vda: %pre-Skript überspringt lsblk (leeres TRAN bei virtio-blk
+        # verschiebt Spalten → Disk nicht erkannt). Direktangabe ist zuverlässiger.
+        iso_label = _read_iso_label(iso_image)
+        kernel_args = (
+            f"inst.stage2=hd:LABEL={iso_label} "
+            f"inst.ks=hd:LABEL={iso_label}:/fedora-full.ks "
+            "inst.addrepo=fedora-autoinstall,file:///run/install/repo/rpm "
+            "inst.disk=vda "
+            f"rd.retry=30 {display_mode} "
+            + log_args
+        )
+        qemu_cmd = [
+            "qemu-system-x86_64",
+            "-accel", accel,
+            "-machine", "q35",
+            "-cpu", cpu_model,
+            "-m", "4096",
+            "-smp", "4",
+            "-kernel", str(vmlinuz_copy),
+            "-initrd", str(initrd_copy),
+            "-append", kernel_args,
+            "-drive", f"if=virtio,file={install_disk},format=qcow2",
+            "-cdrom", iso_image,
+            "-serial", f"file:{serial_log}",
+            "-monitor", "none",
+            "-no-reboot",
+        ]
+    else:
+        # USB-Modus: Stage2 vom Netz, Kickstart + RPM vom USB-Image.
+        kernel_args = (
+            "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/ "
+            "inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/ "
+            "inst.ks=hd:LABEL=FEDORA-USB:/kickstart/fedora-vm.ks "
+            "inst.addrepo=fedora-autoinstall,hd:LABEL=FEDORA-USB:/rpm "
+            f"rd.retry=30 {display_mode} "
+            + log_args
+        )
+        qemu_cmd = [
+            "qemu-system-x86_64",
+            "-accel", accel,
+            "-machine", "q35",
+            "-cpu", cpu_model,
+            "-m", "4096",
+            "-smp", "4",
+            "-kernel", str(vmlinuz_copy),
+            "-initrd", str(initrd_copy),
+            "-append", kernel_args,
+            "-drive", f"if=virtio,file={install_disk},format=qcow2",
+            "-drive", f"if=none,id=usbdrive,file={usb_raw},format=raw,snapshot=on",
+            "-device", "virtio-blk-pci,drive=usbdrive",
+            "-serial", f"file:{serial_log}",
+            "-monitor", "none",
+            "-no-reboot",
+        ]
 
     if gui:
-        qemu_cmd.extend(["-display", "cocoa", "-device", "virtio-vga"])
+        qemu_cmd.extend([
+            "-display", "cocoa,zoom-to-fit=on",
+            "-device", "virtio-vga,xres=1920,yres=1080",
+        ])
     else:
         qemu_cmd.extend(["-display", "none"])
 
@@ -332,6 +418,7 @@ def macos_qemu_flow(
         qemu_proc = subprocess.Popen(qemu_cmd, text=True)
     except Exception as exc:
         print(f"[anaconda-vm] FAIL: QEMU Start fehlgeschlagen: {exc}")
+        save_logs()
         cleanup(success=False)
         return 1
 
@@ -352,7 +439,7 @@ def macos_qemu_flow(
 
     if not found:
         print("[anaconda-vm] FAIL: kein Anaconda-Marker im Timeout gefunden")
-        print(f"[anaconda-vm] Hinweis: pruefe Log unter {serial_log}")
+        save_logs()
         cleanup(success=False)
         return 1
 
@@ -366,10 +453,12 @@ def macos_qemu_flow(
                 time.sleep(5)
         except KeyboardInterrupt:
             print("[anaconda-vm] Abbruch durch Benutzer, räume auf...")
+            save_logs()
             cleanup(success=False)
             return 130
 
         rc = qemu_proc.returncode or 0
+        save_logs()
         if rc == 0:
             print("[anaconda-vm] PASS: VM wurde sauber beendet")
             cleanup(success=True)
@@ -379,6 +468,7 @@ def macos_qemu_flow(
         cleanup(success=False)
         return rc
 
+    save_logs()
     cleanup(success=True)
     return 0
 
@@ -395,6 +485,11 @@ def main() -> int:
         "--usb-image",
         default=os.environ.get("FEDORA_VM_USB_IMAGE", ""),
         help="Vorgebautes virtuelles USB-Image (aus 'make install-podman')",
+    )
+    parser.add_argument(
+        "--iso",
+        default=os.environ.get("FEDORA_VM_ISO", ""),
+        help="Gepatchte Installer-ISO (aus 'make build-iso')",
     )
     parser.add_argument(
         "--timeout",
@@ -424,27 +519,33 @@ def main() -> int:
         return 0
 
     usb_device = args.usb_device.strip()
-    usb_image = args.usb_image.strip()
+    usb_image  = args.usb_image.strip()
+    iso_image  = args.iso.strip()
 
-    # Auto-detect virtual USB image from last 'make install-podman' run.
-    if not usb_device and not usb_image:
+    # Auto-detect: ISO hat Priorität (make build-iso) → virtual USB → physisch.
+    if not usb_device and not usb_image and not iso_image:
         project_dir = Path(__file__).resolve().parent.parent
-        auto_img = project_dir / "iso" / "fedora-usb-latest.img"
-        if auto_img.exists():
-            usb_image = str(auto_img)
+        isos = sorted(project_dir.glob("iso/fedora-autoinstall-*.iso"))
+        if isos:
+            iso_image = str(isos[-1])
+            print(f"[anaconda-vm] Auto-erkannt: ISO {Path(iso_image).name}")
+        elif (project_dir / "iso" / "fedora-usb-latest.img").exists():
+            usb_image = str(project_dir / "iso" / "fedora-usb-latest.img")
             print(f"[anaconda-vm] Auto-erkannt: virtuelle USB {usb_image}")
 
-    if not usb_device and not usb_image:
-        print("[anaconda-vm] FAIL: weder --usb-device noch --usb-image angegeben")
-        print("[anaconda-vm] Hinweis: 'make install-podman' ausfuehren um virtuelle USB zu erstellen")
+    if not usb_device and not usb_image and not iso_image:
+        print("[anaconda-vm] FAIL: kein ISO, USB-Image oder USB-Device gefunden")
+        print("[anaconda-vm] Hinweis: 'make build-iso' ausfuehren um ISO zu erstellen")
         return 2
 
     if usb_device and not Path(usb_device).exists():
         print(f"[anaconda-vm] FAIL: USB-Device nicht gefunden: {usb_device}")
         return 2
-
     if usb_image and not Path(usb_image).exists():
         print(f"[anaconda-vm] FAIL: USB-Image nicht gefunden: {usb_image}")
+        return 2
+    if iso_image and not Path(iso_image).exists():
+        print(f"[anaconda-vm] FAIL: ISO nicht gefunden: {iso_image}")
         return 2
 
     # Match common text-mode Anaconda/installer boot markers.
@@ -460,6 +561,7 @@ def main() -> int:
         return macos_qemu_flow(
             usb_device,
             usb_image,
+            iso_image,
             args.timeout,
             args.keep_on_fail,
             args.gui,

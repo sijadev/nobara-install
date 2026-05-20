@@ -1,0 +1,127 @@
+name: Build and Release ISO
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  FEDORA_ISO_NAME: Fedora-Everything-netinst-x86_64-43-1.6.iso
+  FEDORA_ISO_URL: https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Release-Upload
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Python ───────────────────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements-dev.txt
+
+      # ── Unit-Tests ───────────────────────────────────────────────────────────
+      - name: Run unit tests
+        run: bash tests/run-all.sh
+
+      # ── Fedora ISO (gecacht) ─────────────────────────────────────────────────
+      - name: Cache Fedora netinstall ISO
+        id: cache-fedora-iso
+        uses: actions/cache@v4
+        with:
+          path: iso/${{ env.FEDORA_ISO_NAME }}
+          key: fedora-iso-${{ env.FEDORA_ISO_NAME }}
+
+      - name: Download Fedora netinstall ISO
+        if: steps.cache-fedora-iso.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p iso
+          wget -q --show-progress "${{ env.FEDORA_ISO_URL }}" \
+               -O "iso/${{ env.FEDORA_ISO_NAME }}"
+
+      # ── Podman einrichten ────────────────────────────────────────────────────
+      - name: Set up Podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+          # Rootful Podman für --privileged-Container
+          sudo systemctl enable --now podman.socket 2>/dev/null || true
+          sudo podman info --format '{{.Version.Version}}'
+
+      # ── RPM bauen ────────────────────────────────────────────────────────────
+      - name: Build RPM
+        run: sudo -E bash tools/build-rpm.sh
+
+      # ── ISO bauen ────────────────────────────────────────────────────────────
+      - name: Build ISO
+        run: sudo -E bash tools/build-iso.sh
+
+      # ── ISO-Info ─────────────────────────────────────────────────────────────
+      - name: ISO info
+        run: |
+          ISO=$(ls -t iso/fedora-autoinstall-*.iso | head -1)
+          echo "ISO: $ISO"
+          ls -lh "$ISO"
+          # Verifizieren: inst.ks in EFI-Partition
+          python3 - "$ISO" <<'PY'
+          import struct, sys
+          iso = sys.argv[1]
+          with open(iso,'rb') as f:
+              f.seek(512); gpt=f.read(92)
+              assert gpt[:8]==b'EFI PART'
+              pl=struct.unpack_from('<Q',gpt,72)[0]
+              np=struct.unpack_from('<I',gpt,80)[0]
+              ps=struct.unpack_from('<I',gpt,84)[0]
+              f.seek(pl*512)
+              for _ in range(np):
+                  e=f.read(ps)
+                  if len(e)<128: break
+                  s,end=struct.unpack_from('<Q',e,32)[0],struct.unpack_from('<Q',e,40)[0]
+                  if s and 10<(end-s+1)*512/1024/1024<20:
+                      f.seek(s*512); d=f.read((end-s+1)*512)
+                      ok = b'inst.ks' in d and b'set default="0"' in d
+                      print(f"EFI-FAT: inst.ks={'OK' if b'inst.ks' in d else 'FEHLT'}, default=0={'OK' if b'set default=\"0\"' in d else 'FEHLT'}")
+                      sys.exit(0 if ok else 1)
+          PY
+
+      # ── Artifact (nur bei Tags — spart Speicher-Quota) ───────────────────────
+      - name: Upload ISO artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-autoinstall-iso
+          path: iso/fedora-autoinstall-*.iso
+          retention-days: 7
+
+      # ── GitHub Release (nur bei Tags v*) ─────────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: iso/fedora-autoinstall-*.iso
+          body: |
+            ## Fedora Autoinstall ISO
+
+            Gepatchte Fedora 43 Netinstall-ISO mit eingebettetem Kickstart und RPM-Repo.
+
+            ### Installation
+            ```bash
+            # ISO auf USB schreiben (macOS)
+            sudo dd if=fedora-autoinstall-x86_64-43-1.6.iso of=/dev/rdiskN bs=4m status=progress
+
+            # Linux
+            sudo dd if=fedora-autoinstall-x86_64-43-1.6.iso of=/dev/sdX bs=4M status=progress
+            ```
+
+            USB einstecken → UEFI bootet → Anaconda startet automatisch mit Kickstart.

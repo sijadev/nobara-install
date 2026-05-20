@@ -95,7 +95,7 @@ SHEOF
 
     echo "[rpm-pipeline] Erzeuge vLLM-Smoke-Container ${smoke_container} ..."
     podman rm -f "${smoke_container}" >/dev/null 2>&1 || true
-    podman create --platform "${PODMAN_PLATFORM}" --name "${smoke_container}" "${smoke_image}" \
+    podman create --platform "${PODMAN_PLATFORM}" --name "${smoke_container}" --network=none "${smoke_image}" \
         && echo "[rpm-pipeline] OK: vLLM-Smoke-Container erstellt: ${smoke_container}" \
         || { echo "[FAIL] vLLM-Smoke-Container konnte nicht erstellt werden"; rm -rf "${build_dir}"; return 1; }
 

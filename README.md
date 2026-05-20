@@ -1,38 +1,52 @@
-# fedora-autoinstall - beta
+# fedora-autoinstall
 
-Vollautomatisches Unattended-Install-Framework für **Fedora Linux** — eigener GRUB2-Bootloader + Bazzite-Kernel auf USB-Stick, kein Ventoy.
-
-Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohne Eingriff durch.
+Vollautomatisches Unattended-Install-Framework für **Fedora Linux**.  
+Anaconda-Kickstart + Provisioning-RPM werden direkt in die Fedora-Netinstall-ISO eingebettet — einmal `dd` auf den USB-Stick, fertig.
 
 ---
 
-## Systemvoraussetzungen
+## Workflow
 
-### Host-System für USB-Erstellung
+```
+make build-iso          → ISO bauen  (RPM + Kickstart eingebettet)
+make write-iso DEVICE=… → auf USB-Stick schreiben
+                        → Stick einstecken → UEFI → Anaconda startet automatisch
+```
 
-| Was | Version / Bedingung |
+---
+
+## Voraussetzungen
+
+| Was | Bedingung |
 |---|---|
-| Host-System | Fedora Linux oder macOS (Intel/Apple Silicon) |
-| USB-Stick | >= 8 GB, wird komplett neu formatiert |
-| UEFI-Zielsystem | erforderlich (Legacy-BIOS wird nicht unterstützt) |
-| Root-Rechte | sudo für Build/Install-Skripte |
+| Host-Betriebssystem | macOS oder Linux |
+| Podman | für RPM- und ISO-Build im Container |
+| Python 3 + venv | für Tests und VM-Test |
+| UEFI-Zielsystem | erforderlich (Legacy-BIOS nicht unterstützt) |
+| USB-Stick | ≥ 2 GB, wird komplett überschrieben |
 
-### OS-Abhängigkeiten (USB-Build)
+**Fedora-Netinstall-ISO** (einmalig herunterladen und nach `iso/` legen):  
+→ https://fedoraproject.org/everything/download
 
-| Betriebssystem | Benötigte Tools |
-|---|---|
-| Fedora Linux | `sudo dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file curl python3` |
-| macOS | `brew install grub python cpio file-formula curl` (plus systemweit `diskutil`, `hdiutil`) |
+---
 
-### Python-Umgebung (Projekt/Tests)
+## Schnellstart
 
-| Betriebssystem | Benötigt |
-|---|---|
-| macOS | Python 3 mit `venv` |
-| Linux | Python 3 mit `venv` |
+```bash
+git clone https://github.com/sijadev/fedora-autoinstall.git
+cd fedora-autoinstall
 
-> **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer), AMD Ryzen CPU empfohlen.  
-> Legacy-BIOS wird nicht unterstützt.
+# Python-Umgebung
+make install
+
+# ISO bauen (baut RPM automatisch mit)
+make build-iso
+
+# USB-Stick beschreiben (macOS: /dev/diskN, Linux: /dev/sdX)
+make write-iso DEVICE=/dev/diskN
+```
+
+USB-Stick einstecken → UEFI bootet → Anaconda startet direkt mit eingebettetem Kickstart.
 
 ---
 
@@ -40,474 +54,204 @@ Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohn
 
 ```
 fedora-autoinstall/
-
-├── fedora-iso-build.sh        # Custom-ISO bauen (für dd-Flash ohne USB-Boot)
-│
-├── boot/
-│   └── grub.cfg               # GRUB2-Menü (4 Profile: f/d/t/h)
 │
 ├── config/
-│   ├── example.xml            # Referenz-Konfiguration
-│   └── schema.xsd             # XML-Schema (Validierung)
+│   ├── example.xml            # Referenz-Konfiguration (Disk, User, Hostname ...)
+│   └── schema.xsd             # XML-Schema
 │
 ├── kickstart/
-│   ├── fedora-full.ks         # Vollinstallation (GNOME + NVIDIA)
-│   ├── fedora-theme-bash.ks   # GNOME + WhiteSur
+│   ├── fedora-full.ks         # Vollinstallation (generiert aus XML)
 │   ├── fedora-headless-vllm.ks# Headless-Profil (kein GUI)
+│   ├── fedora-theme-bash.ks   # GNOME + WhiteSur
 │   ├── fedora-vm.ks           # VM Smoke-Test (minimale Installation)
 │   └── common-post.inc        # Gemeinsamer %post-Block
 │
 ├── lib/
-│   ├── common.sh              # Logging, dry-run, Safety-Checks
 │   └── xml2ks.py              # XML → Kickstart Konverter + Validator
 │
 ├── rpm/
-│   ├── fedora-autoinstall.spec# RPM-Spec für Provisioning-Scripts
-│   ├── fedora-autoinstall-*.noarch.rpm  # Gebautes Paket
-│   └── repodata/              # createrepo-Metadaten (lokales DNF-Repo)
+│   ├── fedora-autoinstall.spec
+│   ├── fedora-autoinstall-*.noarch.rpm
+│   └── repodata/
 │
-├── scripts/                   # Wird auf Zielsystem installiert (via RPM)
+├── scripts/                   # Wird via RPM auf Zielsystem installiert
 │   ├── first-boot.sh          # Systemweite Provisionierung (root, einmalig)
 │   ├── first-login.sh         # User-Provisionierung (einmalig)
-│   ├── welcome-dialog.sh      # GNOME Welcome-Dialog
-│   └── fedora-provision.desktop # GNOME App-Menü Eintrag
-│
-├── tools/                     # Entwickler- und Build-Werkzeuge (Dev-Rechner)
-│   ├── build-usb.sh           # USB-Stick einmalig aufbauen (GRUB2 + Bazzite-Kernel)
-│   ├── sync-usb.sh            # Repo → USB synchronisieren
-│   ├── apply_config.py        # XML-Config auf Kickstart-Dateien anwenden
-│   └── podman-run.sh          # Interaktiver Container-Start
+│   └── welcome-dialog.sh
 │
 ├── systemd/
-│   └── fedora-first-boot.service
+│   ├── fedora-first-boot.service
+│   ├── vllm@.container
+│   └── vllm-router.service
+│
+├── tools/
+│   ├── build-rpm.sh           # RPM bauen (Podman)
+│   ├── build-iso.sh           # ISO patchen (mkksiso + RPM einbetten)
+│   └── podman_rpm_pipeline.sh # CI-Pipeline für RPM-Validierung
 │
 ├── tests/
-│   ├── run-all.sh             # Test-Runner (Standard + Full + E2E)
-│   ├── test_kickstart_validator.py
+│   ├── run-all.sh
 │   ├── test_xml2ks.py
-│   └── test_anaconda_vm_usb.py# VM E2E Smoke-Test (macOS QEMU / Linux libvirt)
+│   ├── test_kickstart_validator.py
+│   ├── test_apply_config.py
+│   ├── test_anaconda_vm_usb.py# VM E2E Smoke-Test (QEMU, macOS)
+│   └── test_systemd_units.py
 │
 └── iso/
-    ├── kernel-cache/          # Bazzite-Kernel-RPM-Cache (kein Re-Download)
-    └── Fedora-Everything-netinst-*.iso  # Source-ISO (manuell ablegen)
+    └── Fedora-Everything-netinst-*.iso  # manuell ablegen
 ```
 
 ---
 
-## Schnellstart
+## Make-Targets
 
-### Empfohlener Workflow (genau)
-
-1. Repository vorbereiten:
-
-```bash
-git clone https://github.com/sijadev/fedora-autoinstall.git
-cd fedora-autoinstall
-```
-
-2. Python-Umgebung anlegen und Abhängigkeiten installieren:
-
-```bash
-# Nur Laufzeitpakete
-make install
-
-# Optional für Entwicklung/Tests
-make install-dev
-```
-
-3. Konfiguration prüfen/anpassen:
-
-```bash
-# XML-Standardkonfiguration
-cat config/example.xml
-
-# Optional: JSON-Konfiguration für apply_config.py
-cat config/install.json
-```
-
-4. Optional Tests ausführen (vor USB-Schreiben empfohlen):
-
-```bash
-bash tests/run-all.sh --full
-```
-
-5. Optional: RPM manuell bauen (Debug/Entwicklung):
-
-```bash
-# Lokaler Build (Fedora):
-# rpmbuild -bb --define "_sourcedir ." rpm/fedora-autoinstall.spec
-
-# Alternativ auf macOS per Podman/Fedora-Container bauen
-# Ergebnis: rpm/fedora-autoinstall-*.noarch.rpm
-
-# Repo-Metadaten aktualisieren
-createrepo rpm/
-```
-
-Hinweis: `install.sh` erledigt RPM-Build + Repo-Metadaten inzwischen automatisch.
-
-6. USB-Stick vollständig erstellen (empfohlen):
-
-```bash
-sudo ./install.sh /dev/sdX
-# macOS: sudo ./install.sh /dev/diskN
-```
-
-7. Danach inkrementelle Updates auf bestehendem Stick:
-
-```bash
-tools/sync-usb.sh --check
-tools/sync-usb.sh
-```
-
-8. Optional: Podman-E2E mit virtuellem USB-Stick:
-
-```bash
-python3 tests/test_podman_e2e_usb.py --run
-# oder im Gesamtlauf:
-bash tests/run-all.sh --e2e
-```
-
-### 1. USB-Stick einmalig aufbauen
-
-```bash
-# Source-ISO nach iso/ legen (einmalig):
-# https://fedoraproject.org/everything/download  →  iso/
-
-# USB-Stick aufbauen (formatiert, installiert GRUB2 + Bazzite-Kernel):
-sudo tools/build-usb.sh /dev/sdX
-```
-
-Was `build-usb.sh` macht:
-- GPT: Part 1 = EFI (256 MB FAT32), Part 2 = FEDORA-USB (Rest FAT32)
-- GRUB2 EFI (`BOOTX64.EFI`) + `boot/grub.cfg` installieren
-- Bazzite-Kernel von COPR laden (RPM-Cache in `iso/kernel-cache/`)
-- Anaconda-initrd mit Bazzite-Modulen neu packen
-- Kickstart, Scripts, Systemd-Units auf USB kopieren
-- RPM-Repo (`rpm/`) auf USB kopieren
-
-Bazzite-Kernel-RPMs werden in `iso/kernel-cache/` gecacht — kein Re-Download beim nächsten Mal.
-
-### 2. USB-Stick aktuell halten
-
-```bash
-# Prüfen ob Stick aktuell ist:
-tools/sync-usb.sh --check
-
-# Synchronisieren (interaktiv mit Diff):
-tools/sync-usb.sh
-
-# Ohne Rückfrage:
-tools/sync-usb.sh --force
-```
-
-> **Kernel-Update:** `build-usb.sh` erneut ausführen — `sync-usb.sh` aktualisiert nur Scripts/Kickstart/Config, nicht den Kernel.
-
-### 3. Profil wählen und installieren
-
-USB einstecken → UEFI Boot → GRUB2-Menü → Hotkey drücken:
-
-| Taste | Profil | Was passiert |
-|-------|--------|-------------|
-| `f` | Vollinstallation | Anaconda → `fedora-full.ks` (GNOME + NVIDIA + vLLM) |
-| `g` | GUI-Vollinstallation | Wie `f`, aber graphischer Modus + Serial-Log |
-| `d` | Debug-Install | Text-Modus + Serial-Log (ttyS0,115200) |
-| `s` | Debug Live Shell | Anaconda-Shell ohne Installation (`inst.rescue`) |
-| `m` | VM-Test | Anaconda → `fedora-vm.ks` (minimale VM-Installation) |
-| `1` | Minimal Args | Ohne NVIDIA/Multipath (Kompatibilitäts-Test) |
-
-Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO auf dem USB-Stick nötig.
-
-### 4. Provisioner auf laufendem System
-
-```bash
-# Theme + WhiteSur + Oh-My-Bash
-sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile theme-bash
-
-# Headless-Profil, kein GUI
-sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile headless-vllm
-```
-
----
-
-## Alternative: Custom-ISO (ohne USB-Boot)
-
-Für `dd`-Flash direkt auf USB oder SD-Karte — kein GRUB2-Setup nötig:
-
-```bash
-sudo dnf install lorax xorriso cpio zstd
-
-# Standard-ISO mit Kickstart (full-Profil)
-sudo ./fedora-iso-build.sh --profile full
-
-# Mit Bazzite-Kernel-Swap für Blackwell (RTX 50/9070)
-sudo ./fedora-iso-build.sh --profile full --swap-kernel
-
-# Direkt auf USB-Stick schreiben
-sudo ./fedora-iso-build.sh --profile full --swap-kernel --write /dev/sdX
-```
-
-Ergebnis: `iso/Fedora-Auto-full.iso` — booten startet Anaconda automatisch mit eingebettetem Kickstart.
-
----
-
-## NVIDIA Blackwell (RTX 50 / 9070)
-
-Der **Bazzite-Kernel** im USB-Boot bringt nativen sm_120-Support — der iGPU-Workaround aus alten Ventoy-Anleitungen ist **nicht mehr nötig**.
-
-Einfach [f] drücken und abwarten.
-
-### Diagnose: Schwarzer Bildschirm
-
-Falls Anaconda nach dem Boot schweigt: **mindestens 90 Sekunden warten** — stage2 wird live vom Netzwerk geladen.
-
-Falls weiterhin schwarz, **TTY-Switch** versuchen:
-
-| Tastenkombi | Inhalt |
+| Target | Beschreibung |
 |---|---|
-| `Ctrl+Alt+F1` | Anaconda-UI (Hauptkonsole) |
-| `Ctrl+Alt+F2` | Root-Shell — `dmesg`, `journalctl -xb` |
-| `Ctrl+Alt+F3` | `anaconda.log` |
-| `Ctrl+Alt+F4` | Storage-Log |
-| `Ctrl+Alt+F5` | Programm-Log |
-
-Für tiefere Diagnose: **[d] Debug-Install** — Serial-Log landet auf dem USB-Stick unter `logs/`.
-
----
-
-## Profile im Detail
-
-### `full` — Vollinstallation (USB-Boot)
-Frische Neuinstallation auf leerem System. Btrfs, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash.
-
-### `theme-bash` — Theme + Bash (Provisioner)
-WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Bash.
+| `make build-rpm` | `fedora-autoinstall` RPM bauen (Podman/Fedora:43) |
+| `make build-iso` | ISO patchen — Kickstart + RPM einbetten |
+| `make write-iso DEVICE=…` | ISO per `dd` auf USB-Stick schreiben |
+| `make vm-gui-iso` | VM-Test mit gepatchter ISO (QEMU, macOS) |
+| `make vm-gui-virtual` | VM-Test mit virtuellem USB (Fallback) |
+| `make test` | Unit-Tests |
+| `make install` | Python venv + Runtime-Abhängigkeiten |
+| `make clean` | venv entfernen |
 
 ---
 
-## Dateisystem: Btrfs
+## Was in der ISO steckt
 
-Alle Profile nutzen **Btrfs** mit Ubuntu-kompatiblem Subvolume-Layout:
+`make build-iso` nutzt `mkksiso` um aus der Fedora-Netinstall-ISO eine angepasste ISO zu erzeugen:
 
-| Subvolume | Mountpoint | Zweck |
-|-----------|-----------|-------|
-| `@` | `/` | Root — Timeshift-Snapshots |
-| `@home` | `/home` | Home-Verzeichnis |
-
-Mount-Optionen: `compress=zstd:1,noatime`  
-Kein Swap-Partition — **zram-generator** übernimmt (50% RAM, zstd-Kompression).
-
-### Timeshift + GRUB-Snapshots
-
-Beim ersten Boot werden automatisch eingerichtet:
-- **Timeshift** (btrfs-Modus) — monatliche Snapshots + Boot-Snapshot
-- **grub-btrfs** — Snapshots erscheinen im GRUB-Auswahlmenü
-
----
-
-## System-Optimierungen
-
-### Performance (first-boot.sh)
-
-| Bereich | Was |
-|---------|-----|
-| **DNF** | `max_parallel_downloads=10`, `fastestmirror`, `deltarpm` |
-| **Kernel/Sysctl** | `vm.swappiness=10`, `vfs_cache_pressure=50`, `net.core.somaxconn=1024` |
-| **Hugepages** | `madvise` via tmpfiles.d |
-| **CPU** | `tuned throughput-performance` + `schedutil` Governor |
-| **scx_bpfland** | Cache-aware Scheduler für AMD Ryzen CCDs (COPR bieszczaders) |
-| **NVIDIA** | Persistence Mode als systemd-Service |
-| **zram** | 50% RAM, zstd — ersetzt Swap-Partition |
-| **irqbalance** | IRQ-Verteilung auf alle CPU-Kerne |
-| **ananicy-cpp** | Prozess-Priorisierung (COPR eriknguyen) |
-| **AMD Ryzen** | P-State EPP=performance, `amd_pstate=active`, `amd_iommu=on` im GRUB |
-| **fstrim** | Wöchentlicher SSD TRIM |
-
-### GNOME (first-login.sh)
-
-| Bereich | Was |
-|---------|-----|
-| **Theme** | WhiteSur GTK/Icons/Wallpaper/Cursor (macOS-Stil) |
-| **Dock** | Dash-to-Dock: unten, autohide, Apps-Button links |
-| **Extensions** | blur-my-shell, caffeine, AppIndicator, user-theme |
-| **Schrift** | `font-antialiasing=rgba`, `font-hinting=slight` |
-| **Night Light** | 20:00–07:00, 3500K |
-| **GRUB Theme** | WhiteSur (passend zum Desktop) |
-
----
-
-## Tests
-
-```bash
-# Standard-Testlauf (stabil, inkl. systemd Unit-Tests)
-make test
-
-# Verbose
-make run-all-verbose
-
-# Voller Lauf (inkl. Python + Kickstart-Validator)
-make run-all-full
+```
+Fedora-Everything-netinst-x86_64-43.iso
+    + kickstart/fedora-full.ks  → eingebettet als fedora-full.ks
+    + rpm/                      → eingebettet als rpm/ (lokales DNF-Repo)
+    + GRUB: inst.ks=... inst.addrepo=... set default="0"
+    = fedora-autoinstall-x86_64-43.iso
 ```
 
-### VM Smoke-Test (macOS / Linux)
-
-Bootet den Fedora-Installer-Kernel direkt in QEMU, liest `fedora-vm.ks` vom USB-Stick
-und prüft ob Anaconda startet — kein GRUB, kein EFI-Binary nötig.
-
-```bash
-# USB-Stick eingesteckt lassen, Gerätepfad angeben:
-make vm-gui DEVICE=/dev/diskN        # macOS
-make vm-gui DEVICE=/dev/sdX          # Linux
-```
-
-Was passiert:
-1. `boot/vmlinuz` + `boot/initrd.img` werden vom gemounteten USB ins Temp-Dir kopiert
-2. USB wird ausgehängt (`diskutil unmountDisk`)
-3. QEMU startet mit `-kernel`/`-initrd` (direkter Kernel-Boot, kein OVMF)
-4. Anaconda bootet mit `fedora-vm.ks` → minimale Installation auf virtuellem Zieldisk
-5. Fenster bleibt offen bis Installation abgeschlossen oder `Ctrl+C`
-
-> **Hinweis macOS/Apple Silicon:** QEMU emuliert x86\_64 via TCG (kein HVF).
-> Der Stage2-Download dauert 10–15 Minuten — das ist normal.
+Beim Boot wählt GRUB direkt "Install Fedora 43" (kein Media-Check, kein Menü-Timeout).
 
 ---
 
 ## Boot-Ablauf
 
 ```
-FEDORA-USB (GRUB2 + Bazzite-Kernel)
-  └─ GRUB2-Menü (boot/grub.cfg)
-       └─ Anaconda — stage2 vom Fedora Mirror (Netzwerk)
-            ├─ %pre: Disk automatisch erkennen
-            ├─ Btrfs partitionieren (@ + @home Subvolumes)
-            ├─ %packages: fedora-autoinstall RPM vom lokalen USB-Repo
-            └─ %post: provision.env + GNOME-Autostart
+USB-Stick (ISO) → UEFI → GRUB → Anaconda
+    │
+    ├─ inst.ks=hd:LABEL=...:/fedora-full.ks   (Kickstart eingebettet)
+    ├─ inst.addrepo=...,file:///run/install/repo/rpm  (lokales RPM-Repo)
+    │
+    ├─ %pre:     Ziel-Disk automatisch erkennen (NVMe/SATA/BIOS+GPT)
+    ├─ Btrfs:    EFI + /boot + @ + @home Subvolumes
+    ├─ %packages: fedora-autoinstall RPM aus lokalem Repo
+    └─ %post:    provision.env + GNOME-Autostart schreiben
 ```
 
-### Erster Boot (root, einmalig)
-
-`fedora-first-boot.service` führt aus:
-1. System-Update
-2. NVIDIA Open Driver + akmods
-3. CUDA (Fedora-Repo oder NVIDIA-Repo)
-4. Kernel-Tuning: sysctl, hugepages, tuned, scx_bpfland
-5. NVIDIA Persistence Mode
-6. WhiteSur GRUB Theme
-7. Timeshift + grub-btrfs
-8. zram, irqbalance, ananicy-cpp
-9. AMD Ryzen P-State + GRUB-Parameter
-
-### Erster Login (User, einmalig)
-
-`fedora-first-login.sh` führt aus:
-1. Flathub + Flatpak Extension Manager
-2. GNOME Extensions (dash-to-dock, blur-my-shell, caffeine, appindicator)
-3. WhiteSur Themes + Dash-to-Dock Konfiguration
-4. GNOME Tweaks + Night Light
-5. Oh My Bash
+Nach der Installation: System bootet → `fedora-first-boot.service` läuft einmalig.
 
 ---
 
-## Disk-Erkennung
+## Erster Boot (root, automatisch)
 
-Alle Profile erkennen die Ziel-Disk automatisch:
+`fedora-first-boot.service` führt `scripts/first-boot.sh` aus:
 
-```bash
-DISK=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1; exit}')
-```
+1. DNF-Optimierungen (`max_parallel_downloads=10`, `fastestmirror`)
+2. RPM Fusion + System-Update
+3. CachyOS-Kernel (BORE-Scheduler, optional `FEDORA_KERNEL_SOURCE=fedora`)
+4. NVIDIA Open Driver + CUDA (`nvidia-cuda` Profil)
+5. Podman + NVIDIA Container Toolkit
+6. CPU-Tuning: `tuned`, `scx_bpfland`, `sysctl`, Hugepages
+7. WhiteSur GRUB-Theme
+8. Timeshift + grub-btrfs
+9. zram, irqbalance, ananicy-cpp
+10. AMD Ryzen P-State
 
-Funktioniert für SATA (`sda`) und NVMe (`nvme0n1`).
+### CPU-Profile
 
-Override: Im GRUB `e` drücken, an die `linux`-Zeile anhängen:
-```
-inst.disk=nvme1n1
-```
+| Profil | Tuned | Governor | Aktivierung |
+|---|---|---|---|
+| Default (Boot) | `throughput-performance` | `schedutil` | systemd-Service |
+| Bitwig (DAW) | `latency-performance` | `performance` | automatisch bei Bitwig-Start |
 
 ---
 
-## XML-Konfiguration
+## Erster Login (User, automatisch)
 
-Die Kickstart-Dateien werden **nicht manuell editiert** — immer über `lib/xml2ks.py` aus `config/example.xml` generieren:
+`scripts/first-login.sh` führt aus:
+
+1. Flathub + Extension Manager
+2. GNOME Extensions (Dash-to-Dock, Blur-my-Shell, Caffeine, AppIndicator)
+3. WhiteSur GTK/Icons/Wallpaper/Cursor
+4. Oh My Bash
+5. Bitwig Studio (Flatpak) + Audio-optimierter Launcher
+6. vLLM Quadlet-Konfiguration
+
+---
+
+## Konfiguration
+
+Kickstart-Dateien **nicht manuell editieren** — aus XML generieren:
 
 ```bash
 python3 lib/xml2ks.py --config config/example.xml --output kickstart/fedora-full.ks
 ```
 
-### Wichtige XML-Felder
+Danach `make build-iso` ausführen damit die neue Kickstart-Version in die ISO eingebettet wird.
 
-| Element | Beschreibung | Beispiel |
-|---|---|---|
-| `<local-repo>` | `baseurl` für das lokale RPM-Repo auf dem USB-Stick | `file:///run/install/repo/rpm` |
-| `<disk>` | Ziel-Disk (wird automatisch erkannt wenn `<partitioning><scheme>auto</scheme>`) | `/dev/nvme0n1` |
-| `<user/password_hash>` | crypt-Hash (`openssl passwd -6 Passwort`) | `$6$...` |
-| `<first-boot/kernel source="">` | Kernel nach Installation: `cachyos` oder `fedora` | `cachyos` |
-
-### RPM-Repo Pfad (`<local-repo>`)
-
-Anaconda mountet den USB-Stick (Quelle von `inst.ks=hd:LABEL=FEDORA-USB`) unter `/run/install/repo`.
-Das `rpm/`-Verzeichnis auf dem Stick ist damit als `file:///run/install/repo/rpm` erreichbar.
-
-```xml
-<local-repo>file:///run/install/repo/rpm</local-repo>
-```
-
-Das `rpm/`-Verzeichnis muss auf dem Stick vorhanden sein und gültige `repodata/` enthalten:
+### Passwort-Hash erzeugen
 
 ```bash
-# RPM bauen (auf Fedora):
-rpmbuild -bb --define "_sourcedir ." rpm/fedora-autoinstall.spec
-
-# Repo-Metadaten erzeugen:
-createrepo rpm/
-
-# Auf USB synchronisieren:
-tools/sync-usb.sh
+openssl passwd -6 meinPasswort
+# → in config/example.xml unter <user/password_hash> eintragen
 ```
+
+---
+
+## Tests
+
+```bash
+# Unit-Tests (xml2ks, Kickstart, apply_config, systemd)
+make test
+
+# VM Smoke-Test — Anaconda startet und installiert aus ISO
+make vm-gui-iso
+```
+
+Der VM-Test bootet QEMU mit `-kernel`/`-initrd` direkt, liest den Kickstart aus der gepatchten ISO und verifiziert die vollständige Installation (Partitionierung, RPM-Install, dracut, %post).
 
 ---
 
 ## Troubleshooting
 
-### `[!] Softwareauswahl` — Warnung in Anaconda
+### Graphischer Installer startet ohne Kickstart
 
-Das `fedora-autoinstall` Paket kann nicht gefunden werden. Ursache: `rpm/`-Verzeichnis fehlt auf dem USB-Stick oder enthält kein gültiges Repo.
+**Ursache:** ISO auf USB mit `dd` geschrieben, aber alter Bootcode oder abgelaufener Media-Check stört.  
+**Fix:** USB-Stick mit `diskutil unmountDisk` aushängen, dann neu mit `make write-iso` beschreiben.
 
-**Fix:**
-```bash
-# Prüfen ob rpm/ auf dem Stick vorhanden ist:
-ls /run/media/$USER/FEDORA-USB/rpm/
+### `[!] Softwareauswahl` in Anaconda
 
-# Fehlt es, USB neu synchronisieren:
-tools/sync-usb.sh
-```
+`fedora-autoinstall` RPM nicht gefunden. `rpm/repodata/` fehlt oder ist veraltet.  
+**Fix:** `make build-iso` neu ausführen — RPM und Repodata werden dabei aktualisiert.
 
-### PC schaltet sich während `initqueue` aus
+### Disk nicht erkannt (`DISK`-Variable leer)
 
-Tritt auf bevor Anaconda startet — dracut enumeriert Hardware. Typische Ursache: PCIe-AER-Interaktion mit NVIDIA Blackwell / neuem AMD Chipsatz.
+Bei `inst.disk=` fehlt: `%pre` erkennt Disk automatisch via `lsblk`.  
+**Fix (GRUB-Menü `e`):** An `linux`-Zeile anhängen: `inst.disk=nvme0n1`
 
-**Diagnose:** Im GRUB `[e]` drücken, an die `linux`-Zeile anhängen:
+### NVIDIA — Kernel Panic nach erstem Boot
 
-```
-pci=nommconf pci=nomsi
-```
-
-Weitere Kandidaten:
-
-| Symptom | Kernel-Arg |
-|---|---|
-| Shutdown exakt nach ~30 s | `rd.retry=60` (USB-Label wird nicht rechtzeitig erkannt) |
-| NVMe-Enumeration triggert Shutdown | `nvme_core.default_ps_max_latency_us=0` |
-| AMD ACPI-Problem | `amd_iommu=off` |
-
-Für detaillierten Log: **`[d]` Debug-Install** booten — Serial-Output landet auf `ttyS0,115200`.
+**Ursache:** `akmods` scheiterte, CachyOS-Kernel bootet ohne NVIDIA-Modul.  
+**Fix:** `first-boot.sh` erkennt das automatisch und fällt auf Fedora-Standardkernel zurück.  
+Danach: `sudo akmods --force && sudo dracut --regenerate-all --force`
 
 ---
 
-## Hinweise
+## Unterstützte Hardware
 
-- **NVIDIA-Treiber:** Wird erst beim ersten Boot via `akmod-nvidia-open` gebaut — nicht während der Installation.
-- **UEFI erforderlich:** Legacy-BIOS/MBR nicht unterstützt.
-- **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` unter `<user/password_hash>` eintragen.
-- **Kernel-Cache:** `iso/kernel-cache/` — Bazzite-RPMs werden gecacht, kein Re-Download bei `build-usb.sh`.
-- **Kickstart nie manuell editieren** — immer `lib/xml2ks.py` verwenden, sonst gehen Änderungen beim nächsten Generieren verloren.
-
+| Komponente | Details |
+|---|---|
+| CPU | AMD Ryzen (optimiert) oder Intel |
+| GPU | NVIDIA Turing (RTX 20xx) oder neuer inkl. Blackwell (RTX 50xx) |
+| Boot | UEFI (kein Legacy-BIOS) |
+| Dateisystem | Btrfs mit `@` / `@home` Subvolumes |

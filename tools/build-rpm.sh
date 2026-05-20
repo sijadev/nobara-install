@@ -23,9 +23,10 @@ die()  { echo -e "${RED}[build-rpm] $*${RESET}" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
 podman_exec() {
-    # On macOS, podman machine is user-scoped and cannot be managed as root.
     if [[ "$HOST_OS" == "Darwin" && "${EUID}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
         sudo -u "$SUDO_USER" podman "$@"
+    elif [[ "$HOST_OS" == "Linux" && "${EUID}" -ne 0 ]]; then
+        sudo podman "$@"
     else
         podman "$@"
     fi
